@@ -10,6 +10,23 @@ using Microsoft.AspNetCore.Http.Features;
 using System.Diagnostics;
 using System.Text.Json;
 
+// CLI dispatch: when --models is supplied, run the four-model benchmark
+// scaffold and exit. Otherwise fall through to the ASP.NET Kestrel host
+// that serves the REST endpoints (RegressionController etc.). Without
+// this branch, the BenchmarkOptions/BenchmarkRunner classes below are
+// dead code — `dotnet run -- --models ...` would silently start the
+// web host and ignore the args.
+if (args.Any(a => a.Equals("--models", StringComparison.OrdinalIgnoreCase)))
+{
+    var benchOptions = BenchmarkOptions.Parse(args);
+    var report = new BenchmarkRunner(benchOptions).Run();
+    var outputPath = Path.GetFullPath(benchOptions.OutputPath);
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    File.WriteAllText(outputPath, JsonSerializer.Serialize(report, JsonOptions.Default));
+    Console.WriteLine($"Benchmark report written to {outputPath}");
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(options =>
@@ -83,9 +100,15 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
         var results = new List<ModelReport>();
         foreach (var modelName in options.Models)
         {
+            var modelStart = Stopwatch.StartNew();
+            Console.WriteLine($"[bench] {modelName}: building network…");
             var model = factory.Create(modelName);
+            Console.WriteLine($"[bench] {modelName}: training ({options.Epochs}e × {options.TrainBatches}b × {options.BatchSize}bs, {model.ParameterCount} params)…");
             var training = BenchmarkTraining(model);
+            Console.WriteLine($"[bench] {modelName}: training done in {training.TotalSeconds:F2}s; running inference…");
             var inference = BenchmarkInference(model);
+            modelStart.Stop();
+            Console.WriteLine($"[bench] {modelName}: complete in {modelStart.Elapsed.TotalSeconds:F2}s");
             results.Add(new ModelReport(modelName, "AiDotNetNeuralNetwork", model.ParameterCount, training, inference));
         }
 
@@ -377,10 +400,13 @@ internal sealed class AiDotNetLstmModel : AiDotNetBenchmarkModel
     protected override int OutputClasses => 10;
     protected override NeuralNetworkBase<float> BuildNetwork()
     {
-        // Matches PyTorch's LSTMClassifier: LSTM(input=32, hidden=64) + Linear(64, 10).
+        // Matches PyTorch's LSTMClassifier: LSTM(input=32, hidden=64) + take last
+        // timestep + Linear(64, 10). LSTMLayer emits [B, seqLen, hidden]; the
+        // SequenceTokenSliceLayer mirrors PyTorch's `out[:, -1, :]` reduction.
         var layers = new List<ILayer<float>>
         {
             new LSTMLayer<float>(hiddenSize: 64),
+            new SequenceTokenSliceLayer<float>(SequenceTokenSliceLayer<float>.Position.Last),
             new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
         };
         var arch = new NeuralNetworkArchitecture<float>(
@@ -400,22 +426,28 @@ internal sealed class AiDotNetTransformerModel : AiDotNetBenchmarkModel
     protected override int OutputClasses => 10;
     protected override NeuralNetworkBase<float> BuildNetwork()
     {
-        // Matches PyTorch's TransformerClassifier: Linear(32, 64) projection +
-        // 2× TransformerEncoderLayer(d_model=64, nhead=4, dim_ff=128) + mean over seq + Linear(64, 10).
-        var layers = new List<ILayer<float>>
-        {
-            new DenseLayer<float>(64, activationFunction: (IActivationFunction<float>?)null),       // projection 32 -> 64 (d_model)
-            new TransformerEncoderLayer<float>(numHeads: 4, feedForwardDim: 128, embeddingSize: 64),
-            new TransformerEncoderLayer<float>(numHeads: 4, feedForwardDim: 128, embeddingSize: 64),
-            new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
-        };
-        var arch = new NeuralNetworkArchitecture<float>(
+        // Matches PyTorch's TransformerClassifier: nn.Linear(32, 64) projection +
+        // 2x TransformerEncoderLayer(d_model=64, nhead=4, dim_ff=128) + mean over seq + nn.Linear(64, 10).
+        // Uses AiDotNet's production Transformer<float> class (not FeedForwardNeuralNetwork),
+        // which natively understands [B, seq, d_model] input and pools the sequence dim via
+        // SequencePoolingMode.MeanPool before the output head — mirroring PyTorch's
+        // `encoded.mean(dim=1)` reduction in __main__.py.
+        var arch = new TransformerArchitecture<float>(
             inputType: InputType.OneDimensional,
             taskType: NeuralNetworkTaskType.MultiClassClassification,
-            inputSize: 32,
+            numEncoderLayers: 2,
+            numDecoderLayers: 0,
+            numHeads: 4,
+            modelDimension: 64,
+            feedForwardDimension: 128,
+            inputSize: 32,           // per-token feature width
             outputSize: 10,
-            layers: layers);
-        return new FeedForwardNeuralNetwork<float>(arch);
+            dropoutRate: 0.0,
+            maxSequenceLength: 32,
+            vocabularySize: 0,       // continuous features, no embedding table
+            usePositionalEncoding: true,
+            sequencePooling: SequencePoolingMode.MeanPool);
+        return new Transformer<float>(arch);
     }
 }
 

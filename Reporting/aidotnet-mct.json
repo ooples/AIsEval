@@ -1,0 +1,185 @@
+{
+  "Framework": "AiDotNet",
+  "DotNetRuntime": "10.0.8",
+  "AiDotNet": {
+    "loaded": true,
+    "name": "AiDotNet",
+    "version": "0.204.0.0",
+    "neuralTypeProbe": [
+      "AiDotNet.Video.VideoNeuralNetworkBase\u00601",
+      "AiDotNet.UncertaintyQuantification.BayesianNeuralNetworks.BayesianNeuralNetwork\u00601",
+      "AiDotNet.UncertaintyQuantification.BayesianNeuralNetworks.DeepEnsemble\u00601",
+      "AiDotNet.UncertaintyQuantification.BayesianNeuralNetworks.MCDropoutNeuralNetwork\u00601",
+      "AiDotNet.TransferLearning.Algorithms.TransferNeuralNetwork\u00601",
+      "AiDotNet.TimeSeries.ChronosTransformerLayerTensor\u00601",
+      "AiDotNet.TimeSeries.DeepARLstmCellTensor\u00601",
+      "AiDotNet.TimeSeries.TransformerGraphHelper\u00601",
+      "AiDotNet.TimeSeries.NeuralNetworkARIMAModel\u00601",
+      "AiDotNet.TimeSeries.TemporalFusionTransformer\u00601",
+      "AiDotNet.TimeSeries.AnomalyDetection.LSTMVAE\u00601",
+      "AiDotNet.TimeSeries.AnomalyDetection.LSTMVAEOptions\u00601",
+      "AiDotNet.TimeSeries.AnomalyDetection.LSTMEncoderTensor\u00601",
+      "AiDotNet.TimeSeries.AnomalyDetection.LSTMDecoderTensor\u00601",
+      "AiDotNet.TextToSpeech.ProprietaryAPI.AzureNeuralTTS\u00601",
+      "AiDotNet.TextToSpeech.ProprietaryAPI.AzureNeuralTTSOptions",
+      "AiDotNet.TextToSpeech.Classic.TransformerTTS\u00601",
+      "AiDotNet.TextToSpeech.Classic.TransformerTTSOptions",
+      "AiDotNet.SpeechRecognition.ConformerFamily.ConvTransformer\u00601",
+      "AiDotNet.SpeechRecognition.ConformerFamily.ConvTransformerOptions",
+      "AiDotNet.Safety.Watermarking.NeuralImageWatermarker\u00601",
+      "AiDotNet.RetrievalAugmentedGeneration.Generators.NeuralGenerator\u00601",
+      "AiDotNet.RetrievalAugmentedGeneration.EmbeddingModels.LocalTransformerEmbedding\u00601",
+      "AiDotNet.RetrievalAugmentedGeneration.EmbeddingModels.ONNXSentenceTransformer\u00601",
+      "AiDotNet.RetrievalAugmentedGeneration.EmbeddingModels.SentenceTransformersFineTuner\u00601"
+    ]
+  },
+  "Results": [
+    {
+      "Model": "mlp",
+      "Backend": "AiDotNetNeuralNetwork",
+      "Parameters": 468874,
+      "Training": {
+        "EpochSeconds": [
+          0.666704,
+          0.370465,
+          0.368026
+        ],
+        "TotalSeconds": 1.406984,
+        "GradientSecondsAvg": 0.016779,
+        "DataLoadingSecondsAvg": 0.000473,
+        "Resources": {
+          "ManagedRssMbPeak": 478.09,
+          "NvidiaSmiSample": "10, 1015"
+        }
+      },
+      "Inference": [
+        {
+          "BatchSize": 1,
+          "WarmupSecondsAvg": 0.004839,
+          "SteadyStateLatencyMsAvg": 5.296,
+          "ThroughputSamplesPerSecond": 188.807,
+          "MemoryMbPeak": 850.695
+        },
+        {
+          "BatchSize": 8,
+          "WarmupSecondsAvg": 0.004911,
+          "SteadyStateLatencyMsAvg": 5.695,
+          "ThroughputSamplesPerSecond": 1404.618,
+          "MemoryMbPeak": 1258.328
+        },
+        {
+          "BatchSize": 32,
+          "WarmupSecondsAvg": 0.009246,
+          "SteadyStateLatencyMsAvg": 6.957,
+          "ThroughputSamplesPerSecond": 4599.757,
+          "MemoryMbPeak": 1703.613
+        },
+        {
+          "BatchSize": 128,
+          "WarmupSecondsAvg": 0.007913,
+          "SteadyStateLatencyMsAvg": 8.935,
+          "ThroughputSamplesPerSecond": 14326.061,
+          "MemoryMbPeak": 2229.633
+        }
+      ]
+    },
+    {
+      "Model": "cnn",
+      "Backend": "AiDotNetNeuralNetwork",
+      "Parameters": 20490,
+      "Training": {
+        "EpochSeconds": [
+          0.780197,
+          1.190731,
+          0.900408
+        ],
+        "TotalSeconds": 2.871373,
+        "GradientSecondsAvg": 0.044385,
+        "DataLoadingSecondsAvg": 0.000564,
+        "Resources": {
+          "ManagedRssMbPeak": 2913.559,
+          "NvidiaSmiSample": "16, 2817"
+        }
+      },
+      "Inference": [
+        {
+          "BatchSize": 1,
+          "WarmupSecondsAvg": 0.000764,
+          "SteadyStateLatencyMsAvg": 1.054,
+          "ThroughputSamplesPerSecond": 948.516,
+          "MemoryMbPeak": 2568.98
+        },
+        {
+          "BatchSize": 8,
+          "WarmupSecondsAvg": 0.001004,
+          "SteadyStateLatencyMsAvg": 1.16,
+          "ThroughputSamplesPerSecond": 6896.855,
+          "MemoryMbPeak": 2568.98
+        },
+        {
+          "BatchSize": 32,
+          "WarmupSecondsAvg": 0.002227,
+          "SteadyStateLatencyMsAvg": 2.682,
+          "ThroughputSamplesPerSecond": 11930.269,
+          "MemoryMbPeak": 2569.172
+        },
+        {
+          "BatchSize": 128,
+          "WarmupSecondsAvg": 0.010739,
+          "SteadyStateLatencyMsAvg": 6.21,
+          "ThroughputSamplesPerSecond": 20612.095,
+          "MemoryMbPeak": 2643.461
+        }
+      ]
+    },
+    {
+      "Model": "transformer",
+      "Backend": "AiDotNetNeuralNetwork",
+      "Parameters": 51840,
+      "Training": {
+        "EpochSeconds": [
+          5.439298,
+          5.334065,
+          5.410239
+        ],
+        "TotalSeconds": 16.183634,
+        "GradientSecondsAvg": 0.182699,
+        "DataLoadingSecondsAvg": 0.000623,
+        "Resources": {
+          "ManagedRssMbPeak": 3506.781,
+          "NvidiaSmiSample": "29, 3101"
+        }
+      },
+      "Inference": [
+        {
+          "BatchSize": 1,
+          "WarmupSecondsAvg": 0.009419,
+          "SteadyStateLatencyMsAvg": 9.743,
+          "ThroughputSamplesPerSecond": 102.643,
+          "MemoryMbPeak": 3479.336
+        },
+        {
+          "BatchSize": 8,
+          "WarmupSecondsAvg": 0.018173,
+          "SteadyStateLatencyMsAvg": 22.13,
+          "ThroughputSamplesPerSecond": 361.492,
+          "MemoryMbPeak": 3526.434
+        },
+        {
+          "BatchSize": 32,
+          "WarmupSecondsAvg": 0.057726,
+          "SteadyStateLatencyMsAvg": 55.533,
+          "ThroughputSamplesPerSecond": 576.229,
+          "MemoryMbPeak": 3372.035
+        },
+        {
+          "BatchSize": 128,
+          "WarmupSecondsAvg": 0.178027,
+          "SteadyStateLatencyMsAvg": 233.245,
+          "ThroughputSamplesPerSecond": 548.779,
+          "MemoryMbPeak": 5261.934
+        }
+      ]
+    }
+  ]
+}
