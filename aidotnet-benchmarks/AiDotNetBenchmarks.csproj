@@ -7,6 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AiDotNet" Version="0.185.0" />
+    <PackageReference Include="AiDotNet" Version="0.207.0" />
   </ItemGroup>
 </Project>

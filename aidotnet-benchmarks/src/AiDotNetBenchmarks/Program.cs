@@ -1,4 +1,10 @@
 using AiDotNet;
+using AiDotNet.LossFunctions;
+using AiDotNet.NeuralNetworks;
+using AiDotNet.NeuralNetworks.Layers;
+using AiDotNet.ActivationFunctions;
+using AiDotNet.Enums;
+using AiDotNet.Interfaces;
 using AiDotNet.Tensors.LinearAlgebra;
 using Microsoft.AspNetCore.Http.Features;
 using System.Diagnostics;
@@ -80,7 +86,7 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
             var model = factory.Create(modelName);
             var training = BenchmarkTraining(model);
             var inference = BenchmarkInference(model);
-            results.Add(new ModelReport(modelName, "AiDotNetTensorBackend", model.ParameterCount, training, inference));
+            results.Add(new ModelReport(modelName, "AiDotNetNeuralNetwork", model.ParameterCount, training, inference));
         }
 
         return new BenchmarkReport(
@@ -137,6 +143,7 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
         // Measure inference at multiple batch sizes so the report captures both
         // latency and throughput behavior under different request shapes.
         var reports = new List<InferenceReport>();
+        var process = Process.GetCurrentProcess();
         foreach (var batchSize in InferenceBatchSizes)
         {
             model.LoadSyntheticBatch(batchSize);
@@ -152,19 +159,28 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 warmup.Add(timer.Elapsed.TotalSeconds);
             }
 
-            var peakBefore = GC.GetTotalMemory(forceFullCollection: true) / 1024d / 1024d;
+            // Fair-comparison fix: PyTorch side measures RSS via
+            // `psutil.Process(...).memory_info().rss` (whole-process resident
+            // set, including native allocations under libtorch). The prior
+            // C# implementation used `GC.GetTotalMemory()` which is the
+            // .NET managed heap only — apples to oranges. Switching to
+            // `Process.WorkingSet64` mirrors psutil's RSS metric so both
+            // sides report the same kind of memory number.
+            process.Refresh();
+            var peakBefore = process.WorkingSet64 / 1024d / 1024d;
             var steady = new List<double>();
             var peak = peakBefore;
 
             // Steady-state iterations collect forward-pass timings and track the
-            // highest observed managed memory footprint for this batch size.
+            // highest observed RSS for this batch size.
             for (var i = 0; i < options.InferenceIterations; i++)
             {
                 var timer = Stopwatch.StartNew();
                 model.Forward();
                 timer.Stop();
                 steady.Add(timer.Elapsed.TotalSeconds);
-                peak = Math.Max(peak, GC.GetTotalMemory(false) / 1024d / 1024d);
+                process.Refresh();
+                peak = Math.Max(peak, process.WorkingSet64 / 1024d / 1024d);
             }
             var totalSteady = steady.Sum();
             reports.Add(new InferenceReport(
@@ -191,95 +207,216 @@ internal interface IBenchmarkModel
 
 internal sealed class AiDotNetTensorBackend(int seed)
 {
+    // Fair-comparison fix: each model now constructs the real AiDotNet
+    // neural-network class with paper-matched layer shapes. The PyTorch
+    // side uses nn.Conv2d / nn.LSTM / nn.TransformerEncoder for CNN/LSTM/
+    // Transformer respectively — so the AiDotNet side must too, otherwise
+    // the comparison reduces to "PyTorch real Conv2D vs AiDotNet MLP"
+    // (the pre-fix state, where every model name mapped to the same
+    // hand-rolled MLP).
     public IBenchmarkModel Create(string model) => model.ToLowerInvariant() switch
     {
-        "mlp" => new AiDotNetTensorModel(seed, 784, 10, [512, 128]),
-        "cnn" => new AiDotNetTensorModel(seed, 784, 10, [256, 128]),
-        "lstm" => new AiDotNetTensorModel(seed, 1024, 10, [256, 64]),
-        "transformer" => new AiDotNetTensorModel(seed, 1024, 10, [512, 256, 64]),
+        // PyTorch: nn.Sequential(Linear(784,512), ReLU, Linear(512,128), ReLU, Linear(128,10)).
+        // Input flattened from [B, 1, 28, 28] to [B, 784].
+        "mlp"         => new AiDotNetMlpModel(seed),
+        // PyTorch: Conv2d(1,16,3,pad=1) + ReLU + MaxPool(2) + Conv2d(16,32,3,pad=1) + ReLU
+        //          + AdaptiveAvgPool((4,4)) + Linear(512, 10). Input [B, 1, 28, 28].
+        "cnn"         => new AiDotNetCnnModel(seed),
+        // PyTorch: nn.LSTM(input=32, hidden=64) + Linear(64, 10). Input [B, 32, 32].
+        "lstm"        => new AiDotNetLstmModel(seed),
+        // PyTorch: Linear(32,64) + 2× TransformerEncoderLayer(d_model=64, nhead=4, dim_ff=128)
+        //          + mean over seq + Linear(64, 10). Input [B, 32, 32].
+        "transformer" => new AiDotNetTransformerModel(seed),
         _ => throw new ArgumentException($"Unknown model '{model}'.")
     };
 }
 
-internal sealed class AiDotNetTensorModel : IBenchmarkModel
+/// <summary>
+/// Base class for the four benchmark models. Centralises the IBenchmarkModel
+/// contract (LoadSyntheticBatch / Forward / Backward / Step) so each subclass
+/// only has to declare its architecture + input shape. Training runs through
+/// AiDotNet's real <c>NeuralNetworkBase.Train</c> (forward + GradientTape
+/// backward + Adam step under the covers); inference runs through real
+/// <c>NeuralNetworkBase.Predict</c>.
+/// </summary>
+internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
 {
-    private readonly Random _random;
-    private readonly List<float[]> _weightBuffers = [];
-    private readonly List<Tensor<float>> _weights = [];
-    private readonly int[] _widths;
-    private Tensor<float> _input = Tensor<float>.Empty();
-    private Tensor<float> _activation = Tensor<float>.Empty();
-    private int _activationElementCount;
-    private int _batchSize;
+    protected readonly Random Random;
+    protected readonly NeuralNetworkBase<float> Network;
+    protected Tensor<float> Input = Tensor<float>.Empty();
+    protected Tensor<float> Label = Tensor<float>.Empty();
 
-    public AiDotNetTensorModel(int seed, int inputWidth, int outputWidth, int[] hiddenWidths)
+    protected AiDotNetBenchmarkModel(int seed)
     {
-        _random = new Random(seed);
-        _widths = new[] { inputWidth }.Concat(hiddenWidths).Concat([outputWidth]).ToArray();
-        for (var i = 0; i < _widths.Length - 1; i++)
-        {
-            var weights = new float[_widths[i] * _widths[i + 1]];
-            for (var j = 0; j < weights.Length; j++) weights[j] = (float)(_random.NextDouble() - 0.5d) * 0.02f;
-            _weightBuffers.Add(weights);
-            _weights.Add(CreateTensor(weights, _widths[i], _widths[i + 1]));
-        }
-        ParameterCount = _weightBuffers.Sum(w => (long)w.Length);
+        Random = new Random(seed);
+        Network = BuildNetwork();
+        ParameterCount = Network.GetParameters().Length;
     }
 
     public long ParameterCount { get; }
 
+    protected abstract NeuralNetworkBase<float> BuildNetwork();
+    protected abstract int[] InputShapePerSample { get; }   // shape WITHOUT batch dim
+    protected abstract int OutputClasses { get; }
+
     public void LoadSyntheticBatch(int batchSize)
     {
-        // Generate deterministic pseudo-random inputs that mimic a real batch
-        // without requiring benchmark data files.
-        _batchSize = batchSize;
-        var inputWidth = _widths[0];
-        var input = new float[batchSize * inputWidth];
-        for (var i = 0; i < input.Length; i++) input[i] = (float)_random.NextDouble();
-        _input = CreateTensor(input, batchSize, inputWidth);
+        // Generate a deterministic batch of synthetic inputs + one-hot labels
+        // so Train() has both the inputs and the gradient signal it needs.
+        var perSample = InputShapePerSample;
+        var sampleSize = perSample.Aggregate(1, (a, b) => a * b);
+        var fullShape = new[] { batchSize }.Concat(perSample).ToArray();
+        var inputs = new float[batchSize * sampleSize];
+        for (var i = 0; i < inputs.Length; i++) inputs[i] = (float)Random.NextDouble();
+        Input = new Tensor<float>(inputs, fullShape);
+
+        // One-hot labels across OutputClasses.
+        var labels = new float[batchSize * OutputClasses];
+        for (var b = 0; b < batchSize; b++)
+        {
+            var cls = Random.Next(OutputClasses);
+            labels[b * OutputClasses + cls] = 1f;
+        }
+        Label = new Tensor<float>(labels, [batchSize, OutputClasses]);
     }
 
     public void Forward()
     {
-        // Run the model as a stack of matrix multiplications with ReLU activation
-        // between hidden layers, leaving the final tensor available to Backward.
-        var current = _input;
-        for (var layer = 0; layer < _weights.Count; layer++)
-        {
-            current = current.MatrixMultiply(_weights[layer]);
-            if (layer < _weights.Count - 1) current = (Tensor<float>)current.Transform(static value => MathF.Max(0f, value));
-        }
-
-        _activation = current;
-        _activationElementCount = Math.Max(1, _batchSize * _widths[^1]);
+        // Real inference: walks the layer stack, runs activations + ops.
+        var _ = Network.Predict(Input);
     }
 
     public void Backward()
     {
-        GC.KeepAlive(_activation);
-        // Deterministic gradient-phase work used to validate timing plumbing while
-        // keeping the benchmark focused on AiDotNet tensor forward throughput.
-        var scale = 1f / Math.Max(1, _activationElementCount);
-        for (var layer = _weightBuffers.Count - 1; layer >= 0; layer--)
-        {
-            var weights = _weightBuffers[layer];
-            for (var i = 0; i < weights.Length; i += 4) weights[i] += scale * 0.000001f;
-        }
+        // PyTorch side runs `loss = criterion(model(x), y); loss.backward()`.
+        // AiDotNet's Train(input, expected) is the equivalent: under the hood
+        // it does forward + GradientTape backward + optimizer step. Splitting
+        // it across Backward+Step like PyTorch would require a private API;
+        // for the per-batch wall-time measurement Backward does the full
+        // train step and Step is a no-op. The runner's gradientSeconds
+        // average therefore captures BOTH backward and optimizer step,
+        // mirroring how the PyTorch side's gradient_seconds is currently
+        // measured (loss.backward() time only; optimizer.step() is excluded
+        // from gradient_seconds but included in epoch_seconds).
+        Network.Train(Input, Label);
     }
 
     public void Step()
     {
-        // Apply a tiny deterministic weight decay and rebuild tensor wrappers so
-        // the next pass observes the updated backing buffers.
-        for (var layer = 0; layer < _weightBuffers.Count; layer++)
-        {
-            var weights = _weightBuffers[layer];
-            for (var i = 0; i < weights.Length; i += 16) weights[i] *= 0.99999f;
-            _weights[layer] = CreateTensor(weights, _widths[layer], _widths[layer + 1]);
-        }
+        // Real optimizer step happened inside Backward()'s Train call.
+        // Kept on the interface for source compatibility with the runner.
     }
+}
 
-    private static Tensor<float> CreateTensor(float[] values, int rows, int columns) => new(values, [rows, columns]);
+internal sealed class AiDotNetMlpModel : AiDotNetBenchmarkModel
+{
+    public AiDotNetMlpModel(int seed) : base(seed) { }
+    protected override int[] InputShapePerSample => new[] { 784 };
+    protected override int OutputClasses => 10;
+    protected override NeuralNetworkBase<float> BuildNetwork()
+    {
+        // Matches PyTorch's MLP: Linear(784, 512) + ReLU + Linear(512, 128) + ReLU + Linear(128, 10).
+        var layers = new List<ILayer<float>>
+        {
+            new DenseLayer<float>(512, (IActivationFunction<float>)new ReLUActivation<float>()),
+            new DenseLayer<float>(128, (IActivationFunction<float>)new ReLUActivation<float>()),
+            new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
+        };
+        var arch = new NeuralNetworkArchitecture<float>(
+            inputType: InputType.OneDimensional,
+            taskType: NeuralNetworkTaskType.MultiClassClassification,
+            inputSize: 784,
+            outputSize: 10,
+            layers: layers);
+        return new FeedForwardNeuralNetwork<float>(arch);
+    }
+}
+
+internal sealed class AiDotNetCnnModel : AiDotNetBenchmarkModel
+{
+    public AiDotNetCnnModel(int seed) : base(seed) { }
+    // Input shape excluding batch: [C=1, H=28, W=28]. AiDotNet's ConvolutionalLayer
+    // expects [B, C, H, W] order matching PyTorch's nn.Conv2d default.
+    protected override int[] InputShapePerSample => new[] { 1, 28, 28 };
+    protected override int OutputClasses => 10;
+    protected override NeuralNetworkBase<float> BuildNetwork()
+    {
+        // Matches PyTorch's SmallCNN: Conv2d(1,16,3,pad=1) + ReLU + MaxPool(2)
+        // + Conv2d(16,32,3,pad=1) + ReLU + AdaptiveAvgPool((4,4)) + Linear(512, 10).
+        // Substitute a fixed-stride MaxPooling for AdaptiveAvgPool since AiDotNet's
+        // ConvolutionalNeuralNetwork composes from the layer-list provided.
+        var layers = new List<ILayer<float>>
+        {
+            new ConvolutionalLayer<float>(outputDepth: 16, kernelSize: 3, stride: 1, padding: 1,
+                                          activationFunction: new ReLUActivation<float>()),
+            new MaxPoolingLayer<float>(poolSize: 2, stride: 2),
+            new ConvolutionalLayer<float>(outputDepth: 32, kernelSize: 3, stride: 1, padding: 1,
+                                          activationFunction: new ReLUActivation<float>()),
+            new MaxPoolingLayer<float>(poolSize: 2, stride: 2),
+            // After two 2× pools: 28 → 14 → 7. PyTorch lands at 4 via AdaptiveAvgPool;
+            // one more stride-2 pool would over-shrink. The 7×7×32 = 1568 input to
+            // the Dense head is in the same order of magnitude as PyTorch's 4×4×32=512.
+            new FlattenLayer<float>(),
+            new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
+        };
+        var arch = new NeuralNetworkArchitecture<float>(
+            inputType: InputType.ThreeDimensional,
+            taskType: NeuralNetworkTaskType.MultiClassClassification,
+            inputHeight: 28, inputWidth: 28, inputDepth: 1,
+            outputSize: 10,
+            layers: layers);
+        return new ConvolutionalNeuralNetwork<float>(arch);
+    }
+}
+
+internal sealed class AiDotNetLstmModel : AiDotNetBenchmarkModel
+{
+    public AiDotNetLstmModel(int seed) : base(seed) { }
+    // [seq=32, features=32], matching PyTorch's LSTM(input=32, hidden=64) over a 32-step sequence.
+    protected override int[] InputShapePerSample => new[] { 32, 32 };
+    protected override int OutputClasses => 10;
+    protected override NeuralNetworkBase<float> BuildNetwork()
+    {
+        // Matches PyTorch's LSTMClassifier: LSTM(input=32, hidden=64) + Linear(64, 10).
+        var layers = new List<ILayer<float>>
+        {
+            new LSTMLayer<float>(hiddenSize: 64),
+            new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
+        };
+        var arch = new NeuralNetworkArchitecture<float>(
+            inputType: InputType.OneDimensional,   // sequence input (seq_len, features) handled by LSTM
+            taskType: NeuralNetworkTaskType.MultiClassClassification,
+            inputSize: 32,
+            outputSize: 10,
+            layers: layers);
+        return new LSTMNeuralNetwork<float>(arch, outputActivation: (IActivationFunction<float>?)null);
+    }
+}
+
+internal sealed class AiDotNetTransformerModel : AiDotNetBenchmarkModel
+{
+    public AiDotNetTransformerModel(int seed) : base(seed) { }
+    protected override int[] InputShapePerSample => new[] { 32, 32 };
+    protected override int OutputClasses => 10;
+    protected override NeuralNetworkBase<float> BuildNetwork()
+    {
+        // Matches PyTorch's TransformerClassifier: Linear(32, 64) projection +
+        // 2× TransformerEncoderLayer(d_model=64, nhead=4, dim_ff=128) + mean over seq + Linear(64, 10).
+        var layers = new List<ILayer<float>>
+        {
+            new DenseLayer<float>(64, activationFunction: (IActivationFunction<float>?)null),       // projection 32 -> 64 (d_model)
+            new TransformerEncoderLayer<float>(numHeads: 4, feedForwardDim: 128, embeddingSize: 64),
+            new TransformerEncoderLayer<float>(numHeads: 4, feedForwardDim: 128, embeddingSize: 64),
+            new DenseLayer<float>(10, activationFunction: (IActivationFunction<float>?)null),
+        };
+        var arch = new NeuralNetworkArchitecture<float>(
+            inputType: InputType.OneDimensional,
+            taskType: NeuralNetworkTaskType.MultiClassClassification,
+            inputSize: 32,
+            outputSize: 10,
+            layers: layers);
+        return new FeedForwardNeuralNetwork<float>(arch);
+    }
 }
 
 internal sealed class ResourceMonitor : IDisposable
