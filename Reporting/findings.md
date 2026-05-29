@@ -29,6 +29,56 @@ check on direction.
 > side improved — read the two sides as measured together, not against the
 > older PyTorch column.
 
+### Why AiDotNet trailed here — three root causes (2026-05-29 deep-dive)
+
+The Tensors micro-benchmarks beat PyTorch-CPU on the raw fused ops, yet this
+end-to-end scaffold showed AiDotNet 9–21× slower. Three distinct causes, none
+of which is "the math is slow":
+
+1. **Wrong backend (the 9–21× factor).** AiDotNet.Tensors ships a
+   `[ModuleInitializer]` (`GpuAutoDetectModuleInit`) that auto-switches the
+   global engine to OpenCL/DirectGpu at assembly load. On this rig it bound to a
+   discrete **NVIDIA GTX 1660 Ti via OpenCL** (608 kernels compiled) — and for
+   these tiny CPU-class workloads the GPU dispatch/transfer overhead is far
+   worse than the native CPU path. The benchmark now calls
+   `AiDotNetEngine.ResetToCpu()` at startup (library-documented baseline). Effect
+   on MLP bs=128 inference: **12.3 ms → 1.86 ms**; LSTM training 26.5 s → 3.1 s.
+
+2. **Fused inference kernels are not wired into the high-level models.** The
+   generic `FeedForwardNeuralNetwork.Predict` / transformer attention walk the
+   layer stack op-by-op through the tape; they never call the fused
+   `IEngine.MlpForward` / fused-MHA kernels that the Tensors PRs optimized.
+   `grep` confirms `MlpForward` appears only in an enum in the framework. Only
+   `LSTMLayer` is wired to its fused kernel (`LstmSequenceForward`) — and LSTM
+   is the one model that's competitive (bs=1 0.31 ms vs PyTorch 0.27 ms). The
+   `mlp-fused` benchmark variant calls `MlpForward` directly: bs=128
+   1.86 → 1.19 ms. Still ~2× off this run's PyTorch (0.58 ms), because the
+   PyTorch baseline this session was unusually fast (see note below).
+
+3. **The compiled fused-training path silently never runs.** `EnableCompilation`
+   defaults to `true`, so `CompiledTapeTrainingStep.TryStepWithFusedOptimizer`
+   is *attempted on every `Train()` step* — but it **falls back to the eager tape
+   every time** because `TryMapToFusedOptimizerConfig` rejects the model's default
+   optimizer (`FusedOptimizerPathEvent: Hit=False, Reason="optimizer
+   AdamOptimizer\`3 not compatible with fused kernel"`). The fallback is **silent**
+   at the default diagnostic level — it only surfaces at
+   `TrainingDiagnosticsConfig.Level = PerStep`, which is how it was found here
+   (run with `AISEVAL_FUSED_DIAG=1`). So the env vars `AIDOTNET_COMPILED_BACKWARD`
+   / `AIDOTNET_CROSS_LAYER_FUSION` had no effect — the *framework* fused-training
+   step was already gated off by optimizer incompatibility, and those env vars
+   only toggle an unrelated Tensors-side backward-walk that optimizes graph-walk
+   dispatch (negligible vs the GEMM compute that dominates). **This is the
+   AiDotNet-side bug to fix**: either make the fused mapper accept the default
+   optimizer config, default models to a fused-compatible optimizer, or — at
+   minimum — stop the fallback from being silent.
+
+> **Baseline caveat.** PyTorch's MLP bs=128 latency swung 3.3× between sessions
+> (1.91 ms in the prior table → 0.58 ms here) purely from rig contention. The
+> Tensors PRs were validated as *p95(ours) < median(PyTorch)* against a ~1.9 ms
+> PyTorch; the fused MLP at 1.19 ms beats that, but loses to an unloaded 0.58 ms
+> PyTorch. A credible head-to-head needs both sides thread-pinned and isolated,
+> reporting p95 — otherwise rig noise dominates the verdict.
+
 ### PyTorch fairness: eager, not compiled
 
 The PyTorch side runs **eager mode** — plain `model(x)` forward passes with

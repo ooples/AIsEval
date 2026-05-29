@@ -18,6 +18,45 @@ using System.Text.Json;
 // web host and ignore the args.
 if (args.Any(a => a.Equals("--models", StringComparison.OrdinalIgnoreCase)))
 {
+    // Fair comparison vs PyTorch-CPU: force the native CPU engine.
+    //
+    // AiDotNet.Tensors ships a [ModuleInitializer] (GpuAutoDetectModuleInit)
+    // that auto-detects a GPU/OpenCL device at assembly load and switches the
+    // global engine to DirectGpu/OpenCL. On this rig that means every op was
+    // dispatching through CLBlast/OpenCL (the 608-kernel compile in the logs) —
+    // an integrated-GPU / OpenCL path that is SLOWER than the native
+    // OneDNN/OpenBLAS CPU path for these small-to-medium workloads, and is not
+    // the path the AiDotNet.Tensors micro-benchmarks beat PyTorch-CPU on.
+    // ResetToCpu() pins the CPU engine so this scaffold compares CPU-vs-CPU.
+    // (The library also documents AIDOTNET_DISABLE_GPU=1 as the before-startup
+    // opt-out; this in-code reset additionally covers the published-DLL path
+    // where launchSettings env vars don't apply.)
+    AiDotNet.Tensors.Engines.AiDotNetEngine.ResetToCpu();
+    Console.WriteLine($"[bench] engine pinned to CPU: {AiDotNet.Tensors.Engines.AiDotNetEngine.Current.GetType().Name}");
+
+    // Opt-in (AISEVAL_FUSED_DIAG=1): surface whether the compiled fused-optimizer
+    // training path actually runs (Hit) or silently falls back to the eager tape
+    // (and why). This is how the "compiled training does nothing" issue was found:
+    // EnableCompilation defaults to true and the fused step is ATTEMPTED every
+    // step, but TryMapToFusedOptimizerConfig rejects the model's default optimizer
+    // ("AdamOptimizer not compatible with fused kernel"), so every step silently
+    // falls back to the eager tape. The fallback is invisible at the default
+    // Silent diagnostic level — only PerStep surfaces the FusedOptimizerPathEvent.
+    if (Environment.GetEnvironmentVariable("AISEVAL_FUSED_DIAG") == "1")
+    {
+        AiDotNet.Configuration.TrainingDiagnosticsConfig.Level = AiDotNet.Configuration.TrainingDiagnosticLevel.PerStep;
+        var fusedSeen = new HashSet<string>();
+        AiDotNet.Configuration.TrainingDiagnosticsConfig.Sink = evt =>
+        {
+            if (evt is AiDotNet.Configuration.FusedOptimizerPathEvent f)
+            {
+                var key = $"{f.Hit}:{f.Reason}";
+                if (fusedSeen.Add(key))
+                    Console.WriteLine($"[bench] FUSED-PATH event: Hit={f.Hit} Reason={f.Reason ?? "(none)"}");
+            }
+        };
+    }
+
     var benchOptions = BenchmarkOptions.Parse(args);
     var report = new BenchmarkRunner(benchOptions).Run();
     var outputPath = Path.GetFullPath(benchOptions.OutputPath);
@@ -250,6 +289,13 @@ internal sealed class AiDotNetTensorBackend(int seed)
         // PyTorch: Linear(32,64) + 2× TransformerEncoderLayer(d_model=64, nhead=4, dim_ff=128)
         //          + mean over seq + Linear(64, 10). Input [B, 32, 32].
         "transformer" => new AiDotNetTransformerModel(seed),
+        // Fused-primitive INFERENCE path: same 784->512->128->10 ReLU MLP, but
+        // routed through the AiDotNet.Tensors fused MlpForward kernel (issue
+        // #436 P1) instead of the generic per-layer Predict() walk. This is the
+        // op the Tensors micro-benchmarks beat PyTorch-CPU on; the high-level
+        // FeedForwardNeuralNetwork.Predict does NOT call it, which is the whole
+        // end-to-end MLP gap. Inference-only (MlpForward is forward-only).
+        "mlp-fused"   => new AiDotNetMlpFusedModel(seed),
         _ => throw new ArgumentException($"Unknown model '{model}'.")
     };
 }
@@ -353,6 +399,66 @@ internal sealed class AiDotNetMlpModel : AiDotNetBenchmarkModel
             layers: layers);
         return new FeedForwardNeuralNetwork<float>(arch);
     }
+}
+
+/// <summary>
+/// Fused-primitive MLP: identical 784→512→128→10 ReLU shape as <see cref="AiDotNetMlpModel"/>,
+/// but inference routes through <c>IEngine.MlpForward</c> — the fused, thread-capped
+/// multi-layer kernel from AiDotNet.Tensors #474/#436-P1 that the Tensors micro-benchmarks
+/// beat PyTorch-CPU on. The point: the generic <c>FeedForwardNeuralNetwork.Predict</c> path
+/// the other MLP model uses does NOT call this kernel, so the end-to-end MLP comparison
+/// never exercises the fast path. This variant measures what the framework SHOULD dispatch
+/// to. Forward-only (MlpForward throws under a GradientTape), so training is not measured.
+/// </summary>
+internal sealed class AiDotNetMlpFusedModel : IBenchmarkModel
+{
+    private static readonly int[] LayerSizes = [784, 512, 128, 10];
+    private readonly Tensor<float>[] _weights;
+    private readonly Tensor<float>?[] _biases;
+    private Tensor<float> _input = Tensor<float>.Empty();
+
+    public AiDotNetMlpFusedModel(int seed)
+    {
+        var rng = new Random(seed);
+        _weights = new Tensor<float>[LayerSizes.Length - 1];
+        _biases = new Tensor<float>?[LayerSizes.Length - 1];
+        for (var i = 0; i < _weights.Length; i++)
+        {
+            int inF = LayerSizes[i], outF = LayerSizes[i + 1];
+            // Xavier-ish init; values are immaterial to latency but keep them finite.
+            var scale = (float)Math.Sqrt(2.0 / inF);
+            var w = new float[inF * outF];
+            for (var k = 0; k < w.Length; k++) w[k] = (float)(rng.NextDouble() - 0.5) * 2f * scale;
+            _weights[i] = new Tensor<float>(w, [inF, outF]);
+            var b = new float[outF];
+            for (var k = 0; k < b.Length; k++) b[k] = (float)(rng.NextDouble() - 0.5) * 0.01f;
+            _biases[i] = new Tensor<float>(b, [outF]);
+        }
+        ParameterCount = _weights.Sum(w => (long)w.Length) + _biases.Sum(b => (long)(b?.Length ?? 0));
+    }
+
+    public long ParameterCount { get; }
+
+    public void LoadSyntheticBatch(int batchSize)
+    {
+        var data = new float[batchSize * 784];
+        var rng = new Random(1234);
+        for (var i = 0; i < data.Length; i++) data[i] = (float)rng.NextDouble();
+        _input = new Tensor<float>(data, [batchSize, 784]);
+    }
+
+    public void Forward()
+    {
+        // The fused multi-layer kernel: activation(x @ Wᵢ + bᵢ) for every layer in one call.
+        var _ = AiDotNet.Tensors.Engines.AiDotNetEngine.Current.MlpForward(
+            _input, _weights, _biases,
+            AiDotNet.Tensors.Engines.FusedActivationType.ReLU,
+            AiDotNet.Tensors.Engines.FusedActivationType.None);
+    }
+
+    // Inference-only variant — MlpForward is forward-only. Training is measured by `mlp`.
+    public void Backward() { }
+    public void Step() { }
 }
 
 internal sealed class AiDotNetCnnModel : AiDotNetBenchmarkModel
