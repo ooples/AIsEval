@@ -245,10 +245,16 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 peak = Math.Max(peak, process.WorkingSet64 / 1024d / 1024d);
             }
             var totalSteady = steady.Sum();
+            // p95 latency (symmetric with the PyTorch side): robust to the
+            // rig-contention noise that swings the mean. Tensors perf gate is
+            // p95(ours) < median(PyTorch).
+            var steadySorted = steady.OrderBy(x => x).ToList();
+            int p95Idx = Math.Min(steadySorted.Count - 1, (int)Math.Round(0.95 * (steadySorted.Count - 1)));
             reports.Add(new InferenceReport(
                 batchSize,
                 Round6(warmup.Average()),
                 Math.Round(steady.Average() * 1000d, 3),
+                Math.Round(steadySorted[p95Idx] * 1000d, 3),
                 Math.Round(options.InferenceIterations * batchSize / totalSteady, 3),
                 Math.Round(peak, 3)));
         }
@@ -646,7 +652,7 @@ internal sealed record BenchmarkReport(string Framework, string DotNetRuntime, o
 internal sealed record ModelReport(string Model, string Backend, long Parameters, TrainingReport Training, List<InferenceReport> Inference);
 internal sealed record TrainingReport(double[] EpochSeconds, double TotalSeconds, double GradientSecondsAvg, double DataLoadingSecondsAvg, ResourceReport Resources);
 internal sealed record ResourceReport(double ManagedRssMbPeak, string? NvidiaSmiSample);
-internal sealed record InferenceReport(int BatchSize, double WarmupSecondsAvg, double SteadyStateLatencyMsAvg, double ThroughputSamplesPerSecond, double MemoryMbPeak);
+internal sealed record InferenceReport(int BatchSize, double WarmupSecondsAvg, double SteadyStateLatencyMsAvg, double SteadyStateLatencyMsP95, double ThroughputSamplesPerSecond, double MemoryMbPeak);
 
 internal static class JsonOptions
 {
