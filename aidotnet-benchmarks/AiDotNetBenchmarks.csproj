@@ -7,12 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- AiDotNet 0.207.4: latest framework release (2026-05-27); ships the
-         #1457 LSTM fused-inference wiring (LSTMLayer<float>.Forward routes to
-         CpuEngine.LstmSequenceForward in inference mode). -->
-    <PackageReference Include="AiDotNet" Version="0.207.4" />
-    <!-- Pin AiDotNet.Tensors 0.86.1 explicitly so we get the post-#436 perf
-         block even if the transitive AiDotNet pin lags behind. v0.86.1 ships:
+    <!-- AiDotNet 0.207.9: latest framework release. Ships the #1457 LSTM
+         fused-inference wiring (LSTMLayer<float>.Forward routes to
+         CpuEngine.LstmSequenceForward in inference mode) plus subsequent fixes. -->
+    <PackageReference Include="AiDotNet" Version="0.207.9" />
+    <!-- Pin AiDotNet.Tensors 0.86.4 explicitly so we get the post-#436 perf
+         block even if the transitive AiDotNet pin lags behind. v0.86.x ships:
            * Tensors #488 — fused QKV + transpose-fused SDPA. MHA on the AIsEval
              [128, 32, 64] h=4 shape: 5.31 -> 2.26 ms (beats torch ~2.74 ms).
            * Tensors #474 — small-batch native-BLAS thread cap inside MlpForward.
@@ -25,6 +25,6 @@
            * TensorArena.CreatePersistent / Activate — zero-GC training arena
              that survives across Train() steps.
          These are what the fair-comparison JSON should reflect. -->
-    <PackageReference Include="AiDotNet.Tensors" Version="0.86.1" />
+    <PackageReference Include="AiDotNet.Tensors" Version="0.86.4" />
   </ItemGroup>
 </Project>

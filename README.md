@@ -102,4 +102,9 @@ results/
   evidence.
 - Memory measurement is now symmetric — both sides record peak RSS (Windows
   `Process.WorkingSet64` / Linux `psutil.Process.memory_info().rss`).
-- AiDotNet NuGet pin is bumped to `0.207.0` (was `0.185.0`).
+- AiDotNet NuGet pin is `0.207.9` with `AiDotNet.Tensors` pinned to `0.86.4`
+  (was `0.207.0` / `0.86.1`; originally `0.185.0`).
+- PyTorch runs in **eager mode** — no `torch.compile` / `torch.jit` /
+  TorchDynamo anywhere in `pytorch-benchmarks/`. Eager is the apples-to-apples
+  baseline; a compiled graph would fuse kernels ahead of time in a way the
+  AiDotNet path does not. The emitted report records `torch.__version__`.
