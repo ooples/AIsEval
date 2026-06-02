@@ -34,17 +34,22 @@ if (args.Any(a => a.Equals("--models", StringComparison.OrdinalIgnoreCase)))
     AiDotNet.Tensors.Engines.AiDotNetEngine.ResetToCpu();
     Console.WriteLine($"[bench] engine pinned to CPU: {AiDotNet.Tensors.Engines.AiDotNetEngine.Current.GetType().Name}");
 
-    // Opt-in (AISEVAL_FUSED_DIAG=1): surface whether the compiled fused-optimizer
-    // training path actually runs (Hit) or silently falls back to the eager tape
-    // (and why). This is how the "compiled training does nothing" issue was found:
-    // EnableCompilation defaults to true and the fused step is ATTEMPTED every
-    // step, but TryMapToFusedOptimizerConfig rejects the model's default optimizer
-    // ("AdamOptimizer not compatible with fused kernel"), so every step silently
-    // falls back to the eager tape. The fallback is invisible at the default
-    // Silent diagnostic level — only PerStep surfaces the FusedOptimizerPathEvent.
-    if (Environment.GetEnvironmentVariable("AISEVAL_FUSED_DIAG") == "1")
+    // Opt-in (AISEVAL_FUSED_DIAG=1): prove whether the compiled fused-optimizer
+    // training path actually runs (Hit) or falls back to the eager tape (and why).
+    // This is the exact instrument that found the "compiled training does nothing"
+    // bug — fixed by AiDotNet PR #1469. Before the fix, EnableCompilation defaulted
+    // to true and the fused step was ATTEMPTED every step, but the default optimizer
+    // defaulted to UseAMSGrad=true, which TryMapToFusedOptimizerConfig rejected, so
+    // every step silently fell back to the eager tape. #1469 reverted the default to
+    // standard Adam (amsgrad=False, matching PyTorch/TF/Optax); the fused step now
+    // engages. The fallback is invisible at the default Silent diagnostic level —
+    // only PerStep surfaces the FusedOptimizerPathEvent. With 0.207.13 this prints
+    // "Hit=True" and the post-run summary reports fused steps == total train steps.
+    var fusedDiag = Environment.GetEnvironmentVariable("AISEVAL_FUSED_DIAG") == "1";
+    if (fusedDiag)
     {
         AiDotNet.Configuration.TrainingDiagnosticsConfig.Level = AiDotNet.Configuration.TrainingDiagnosticLevel.PerStep;
+        AiDotNet.Training.CompiledTapeTrainingStep<float>.ResetFusedStepCount();
         var fusedSeen = new HashSet<string>();
         AiDotNet.Configuration.TrainingDiagnosticsConfig.Sink = evt =>
         {
@@ -63,6 +68,23 @@ if (args.Any(a => a.Equals("--models", StringComparison.OrdinalIgnoreCase)))
     Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
     File.WriteAllText(outputPath, JsonSerializer.Serialize(report, JsonOptions.Default));
     Console.WriteLine($"Benchmark report written to {outputPath}");
+
+    if (fusedDiag)
+    {
+        // Single-line answer to "did compiled fused training actually run?": the
+        // count of optimizer steps that engaged the fused/compiled kernel across
+        // the whole run. A non-zero count equal to the total training-step count
+        // (epochs × train-batches × models that train) proves the compiled path
+        // ran every step. A count of 0 with a captured fallback exception is the
+        // signature of the old "compiled does nothing" failure mode (the first
+        // fused step fell back, sticky-disabling the path for the session).
+        var fusedSteps = AiDotNet.Training.CompiledTapeTrainingStep<float>.GetFusedStepCount();
+        var lastFallback = AiDotNet.Training.CompiledTapeTrainingStep<float>.GetLastFallbackException();
+        Console.WriteLine($"[bench] compiled/fused training steps that engaged: {fusedSteps}");
+        Console.WriteLine(lastFallback is null
+            ? "[bench] last fused-fallback exception: (none captured)"
+            : $"[bench] last fused-fallback exception: {lastFallback.GetType().FullName}: {lastFallback.Message}");
+    }
     return;
 }
 
@@ -170,8 +192,8 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
 
         for (var epoch = 0; epoch < options.Epochs; epoch++)
         {
-            // Each epoch repeatedly loads fresh synthetic inputs, performs a
-            // forward pass, simulates backward work, and applies a small update.
+            // Each epoch repeatedly loads fresh synthetic inputs and runs one
+            // full train step (forward + backward + optimizer) per batch.
             var epochTimer = Stopwatch.StartNew();
             for (var batch = 0; batch < options.TrainBatches; batch++)
             {
@@ -180,7 +202,17 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 dataTimer.Stop();
                 dataSeconds.Add(dataTimer.Elapsed.TotalSeconds);
 
-                model.Forward();
+                // Fair-comparison fix: do NOT call model.Forward() here. The
+                // PyTorch training loop does exactly ONE forward per batch
+                // (`logits = model(x); loss.backward(); optimizer.step()`).
+                // Backward() == Network.Train(), which already runs its own
+                // forward + GradientTape backward + optimizer step internally,
+                // so a preceding Forward() (a full discarded Predict() pass)
+                // was a second forward per batch that PyTorch never does —
+                // pure overhead that inflated AiDotNet training time (≈15% on
+                // Transformer at bs=64). Removing it makes both sides one
+                // forward per batch. (Forward() is still exercised on its own
+                // in the inference benchmark below.)
                 var gradientTimer = Stopwatch.StartNew();
                 model.Backward();
                 gradientTimer.Stop();

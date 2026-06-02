@@ -102,9 +102,17 @@ results/
   evidence.
 - Memory measurement is now symmetric — both sides record peak RSS (Windows
   `Process.WorkingSet64` / Linux `psutil.Process.memory_info().rss`).
-- AiDotNet NuGet pin is `0.207.9` with `AiDotNet.Tensors` pinned to `0.86.4`
-  (was `0.207.0` / `0.86.1`; originally `0.185.0`).
+- AiDotNet NuGet pin is `0.207.13` with `AiDotNet.Tensors` pinned to `0.91.1`
+  (was `0.207.9` / `0.86.4`; originally `0.185.0`).
+- **Compiled/fused training engages** on AiDotNet 0.207.13: PR #1469 reverted the
+  default optimizer to standard Adam so the fused step is no longer rejected.
+  Run with `AISEVAL_FUSED_DIAG=1` to confirm (`Hit=True`, 60/60 fused steps, no
+  fallback for every model). The training loop is one forward per batch on both
+  sides (the redundant pre-`Train()` `Forward()` on the C# side was removed).
 - PyTorch runs in **eager mode** — no `torch.compile` / `torch.jit` /
   TorchDynamo anywhere in `pytorch-benchmarks/`. Eager is the apples-to-apples
-  baseline; a compiled graph would fuse kernels ahead of time in a way the
-  AiDotNet path does not. The emitted report records `torch.__version__`.
+  baseline; a compiled graph would fuse kernels ahead of time in a way that
+  compares compilation stacks rather than kernels. The emitted report records
+  `torch.__version__`. On this CPU rig eager PyTorch is still 2.2–4.0× faster
+  than AiDotNet's compiled path on training and faster on most inference shapes —
+  see `Reporting/findings.md`.

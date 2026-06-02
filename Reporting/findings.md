@@ -17,17 +17,35 @@ is a single Windows 11 machine, CPU-only (no CUDA available), shared with
 other work — these are not citable steady-state numbers, just a sanity
 check on direction.
 
-> **Refreshed 2026-05-29** with the latest packages: **AiDotNet 0.207.9 +
-> AiDotNet.Tensors 0.86.4** (was 0.207.0 / 0.86.1). The headline change is
-> that **AiDotNet's LSTM benchmark now completes** — its inference path used
-> to never finish at the PyTorch-default workload (see the prior note below);
-> with the 0.86.x fused LSTM-inference wiring it runs end-to-end. Transformer
-> inference also dropped ~3.8× (233 ms → 61 ms at bs=128) from the fused-MHA /
-> SDPA work in Tensors 0.86.x. PyTorch was re-run on the same rig in the same
-> session; it came out faster than the prior table (the machine was less
-> contended this run), so the absolute gaps shifted even though the AiDotNet
-> side improved — read the two sides as measured together, not against the
-> older PyTorch column.
+> **Refreshed 2026-06-01** with the latest packages: **AiDotNet 0.207.13 +
+> AiDotNet.Tensors 0.91.1** (was 0.207.9 / 0.86.4). Two headline changes:
+>
+> 1. **Compiled/fused training now actually engages.** The 2026-05-29 deep-dive
+>    (root cause #3 below) found that the compiled fused-training step silently
+>    fell back to the eager tape on *every* `Train()` step because the default
+>    optimizer defaulted to `UseAMSGrad=true`, which the fused mapper rejected.
+>    AiDotNet **PR #1469** reverted the default to standard Adam (matching
+>    PyTorch/TF/Optax), and Tensors #501/#502/#513 wired the fused optimizer/
+>    activation kernels + compiled-inference plan. Re-running with
+>    `AISEVAL_FUSED_DIAG=1` now reports `Hit=True` and **60/60 fused training
+>    steps engaged per model, zero fallbacks** for all four families — the
+>    "compiled training does nothing" bug is fixed.
+> 2. **LSTM training dropped ~9×** (26.5 s → 2.82 s) from the fused-recurrence
+>    forward+backward kernels (Tensors #503/#505/#523) + the now-engaged
+>    compiled training step.
+>
+> **Net direction is still PyTorch-favored on this rig**, though: eager
+> PyTorch-CPU 2.11 remains 2.2–4.0× faster on training and faster on most
+> inference shapes (AiDotNet wins only CNN bs=128 and LSTM bs=8). This is
+> AiDotNet's *compiled* path vs PyTorch *eager* — AiDotNet's own PR #1469
+> reported beating `torch.compile` (TorchInductor) ~6× on an MLP, but against
+> plain eager PyTorch on this hardware AiDotNet does not win. Numbers below.
+>
+> The benchmark training loop was also made symmetric this run: the C# side
+> previously ran a redundant `Forward()` (a full discarded `Predict()` pass)
+> *before* `Backward()`/`Train()` every batch — a second forward PyTorch never
+> does. Removing it (one forward per batch on both sides) cut AiDotNet training
+> time ~15% on Transformer (9.42 s → 7.72 s) and a few % elsewhere.
 
 ### Why AiDotNet trailed here — three root causes (2026-05-29 deep-dive)
 
@@ -55,22 +73,25 @@ of which is "the math is slow":
    1.86 → 1.19 ms. Still ~2× off this run's PyTorch (0.58 ms), because the
    PyTorch baseline this session was unusually fast (see note below).
 
-3. **The compiled fused-training path silently never runs.** `EnableCompilation`
-   defaults to `true`, so `CompiledTapeTrainingStep.TryStepWithFusedOptimizer`
-   is *attempted on every `Train()` step* — but it **falls back to the eager tape
-   every time** because `TryMapToFusedOptimizerConfig` rejects the model's default
-   optimizer (`FusedOptimizerPathEvent: Hit=False, Reason="optimizer
-   AdamOptimizer\`3 not compatible with fused kernel"`). The fallback is **silent**
-   at the default diagnostic level — it only surfaces at
-   `TrainingDiagnosticsConfig.Level = PerStep`, which is how it was found here
-   (run with `AISEVAL_FUSED_DIAG=1`). So the env vars `AIDOTNET_COMPILED_BACKWARD`
-   / `AIDOTNET_CROSS_LAYER_FUSION` had no effect — the *framework* fused-training
-   step was already gated off by optimizer incompatibility, and those env vars
-   only toggle an unrelated Tensors-side backward-walk that optimizes graph-walk
-   dispatch (negligible vs the GEMM compute that dominates). **This is the
-   AiDotNet-side bug to fix**: either make the fused mapper accept the default
-   optimizer config, default models to a fused-compatible optimizer, or — at
-   minimum — stop the fallback from being silent.
+3. **The compiled fused-training path silently never ran — ✅ FIXED in 0.207.13
+   (AiDotNet PR #1469).** `EnableCompilation` defaults to `true`, so
+   `CompiledTapeTrainingStep.TryStepWithFusedOptimizer` is *attempted on every
+   `Train()` step* — but on 0.207.9 it **fell back to the eager tape every time**
+   because the default optimizer defaulted to `UseAMSGrad=true` (a non-standard
+   band-aid), and `TryMapToFusedOptimizerConfig` rejected AMSGrad. The fallback
+   was **silent** at the default diagnostic level — it only surfaced at
+   `TrainingDiagnosticsConfig.Level = PerStep` (run with `AISEVAL_FUSED_DIAG=1`),
+   which is how it was found here. **PR #1469 reverted the default to standard
+   Adam** (`amsgrad=False`, matching PyTorch/TF/Optax) and re-architected the
+   dispatch around self-describing `IFusedOptimizerSpec` / `IFusedActivation`
+   interfaces, and Tensors #501/#502 wired the fused kernels. Verified on
+   0.207.13: `AISEVAL_FUSED_DIAG=1` now prints `Hit=True` and the post-run summary
+   reports **60 fused training steps engaged (== 3 epochs × 20 batches), zero
+   fallback exceptions**, for each of MLP/CNN/LSTM/Transformer. The fallback is
+   also no longer silent — it emits a one-time per-model warning when it does
+   happen. Effect: LSTM training 26.5 s → 2.82 s; Transformer training 8.9 s →
+   7.7 s. (Training is still slower than eager PyTorch — see Numbers — but the
+   compiled path is now genuinely exercised rather than dead code.)
 
 > **Baseline caveat.** PyTorch's MLP bs=128 latency swung 3.3× between sessions
 > (1.91 ms in the prior table → 0.58 ms here) purely from rig contention. The
@@ -96,11 +117,12 @@ report records `torch.__version__` so the mode/version is auditable per run.
 |---|---|
 | OS | Windows 11 (build 26200) |
 | Python | 3.13.3 |
-| PyTorch | 2.11.0+cpu (eager) |
+| PyTorch | 2.11.0+cpu (eager), 8 threads |
 | .NET | 10.0.8 |
-| AiDotNet | 0.207.9 NuGet (assembly 0.204.0.0); was 0.185.0 pre-fix |
-| AiDotNet.Tensors | 0.86.4 NuGet |
-| Device | CPU only |
+| AiDotNet | 0.207.13 NuGet (assembly 0.204.0.0); was 0.185.0 pre-fix |
+| AiDotNet.Tensors | 0.91.1 NuGet |
+| CPU threads | 8 (`AIDOTNET_BLAS_THREADS=8` ↔ PyTorch `--threads 8`) |
+| Device | CPU only (`AIDOTNET_DISABLE_GPU=1`) |
 
 Per-model scaffold comparison (Program.cs / \_\_main\_\_.py)
 -----------------------------------------------------------
@@ -116,24 +138,60 @@ Workload: `--epochs 3 --train-batches 20 --batch-size 64 --inference-iterations 
 
 ### Numbers
 
-Training time (3 epochs × 20 batches × batch_size 64), steady-state inference latency at `batch_size=128`, and throughput. All four models now run end-to-end on both sides (AiDotNet 0.207.9 / Tensors 0.86.4, PyTorch 2.11.0+cpu eager), same rig, same session:
+AiDotNet **0.207.13 / Tensors 0.91.1** (compiled/fused training engaged, CPU-pinned,
+GPU disabled) vs PyTorch **2.11.0+cpu eager**, both 8 threads, same rig, same session.
+Workload `--epochs 3 --train-batches 20 --batch-size 64 --inference-iterations 100
+--warmup-iterations 10`. One forward per batch on both sides (see symmetric-loop note above).
 
-| Model | params (PT / AiD) | train total (PT / AiD) | grad/batch (PT / AiD) | bs=128 latency (PT / AiD) | bs=128 throughput sps (PT / AiD) |
-|---|---|---|---|---|---|
-| MLP | 468 874 / 468 874 | 0.35s / 1.66s | 1.1 ms / 21.1 ms | **0.58 ms** / 12.33 ms (AiD ~21× slower) | 219 028 / 10 385 |
-| CNN | 9 930 / 20 490 | 0.63s / 1.86s | 4.3 ms / 27.3 ms | 6.09 ms / **5.97 ms** (≈ tied, AiD marginally faster) | 21 026 / 21 451 |
-| LSTM | 25 738 / 24 832 | 0.47s / 26.49s | 2.7 ms / 432.4 ms | 1.98 ms / 8.24 ms (AiD 4.2× slower — **now finishes**) | 64 693 / 15 532 |
-| Transformer | 69 706 / 51 840 | 2.53s / 8.87s (3.5× slower) | 9.5 ms / 108.5 ms | 6.43 ms / 60.63 ms (AiD 9.4× slower) | 19 917 / 2 111 |
+**Training — total wall time (s), lower is better:**
 
-> **LSTM now completes (the headline change).** On 0.207.0 / 0.86.1 AiDotNet's LSTM `Predict()` never finished at this workload — the inference loop (92 forward passes over `[B=128, seq=32, features=32]`) was still running after >3 minutes. With the 0.86.x fused LSTM-inference wiring it runs end-to-end: bs=128 steady-state latency is **8.24 ms** (vs PyTorch 1.98 ms — a real 4.2× gap, but a *measured* one, not an infinite hang). The remaining LSTM gap has moved to the **training** path (26.5 s vs PyTorch 0.47 s — BPTT through the recurrent cell is the bottleneck now; PyTorch's `nn.LSTM` routes to a fused OneDNN/MKL kernel).
+| Model | params (PT / AiD) | PyTorch | AiDotNet | gap |
+|---|---|---|---|---|
+| MLP | 468 874 / 468 874 | **0.51 s** | 1.17 s | PT 2.3× faster |
+| CNN | 9 930 / 20 490 | **0.86 s** | 2.56 s | PT 3.0× faster |
+| LSTM | 25 738 / 24 832 | **0.70 s** | 2.82 s | PT 4.0× faster (was 26.5 s pre-#1469 — ~9× better) |
+| Transformer | 69 706 / 51 840 | **3.47 s** | 7.72 s | PT 2.2× faster |
 
-> **Transformer improved ~3.8× on inference** (prior 233 ms → 61 ms at bs=128) and ~1.8× on training (16.2 s → 8.9 s) from the fused-QKV / transpose-fused-SDPA work in Tensors 0.86.x. It is still 9.4× slower than eager PyTorch at bs=128 here.
+**Inference — steady-state mean latency (ms), lower is better (AiDotNet p95 in parens):**
 
-> **CNN inference is ≈ tied** with eager PyTorch at bs=128 (5.97 ms vs 6.09 ms). The prior "AiDotNet is uniformly slower" framing does not hold for CNN inference.
+| Model | bs=1 (PT / AiD) | bs=8 (PT / AiD) | bs=32 (PT / AiD) | bs=128 (PT / AiD) |
+|---|---|---|---|---|
+| MLP | **0.12** / 0.22 (p95 0.28) | **0.18** / 0.86 | **0.37** / 0.85 | **0.71** / 1.24 |
+| CNN | **0.28** / 0.40 | **0.88** / 0.93 | **1.84** / 2.09 | 8.00 / **5.69** (AiD wins) |
+| LSTM | **0.44** / 0.51 | 0.68 / **0.44** (AiD wins) | **1.20** / 1.69 | **2.80** / 5.35 |
+| Transformer | **0.78** / 0.93 | **1.55** / 5.63 | **2.98** / 13.58 | **8.86** / 47.12 |
 
-> **MLP** is where AiDotNet trails most on this rig (~21× slower bs=128 inference). PyTorch's `nn.Linear` stack on a 784→512→128→10 net is essentially three OneDNN GEMMs; the gap is the per-op dispatch/threading overhead around small dense matmuls, not the matmul math itself.
+> **Compiled/fused training is now live.** `AISEVAL_FUSED_DIAG=1` confirms `Hit=True`
+> and 60/60 fused steps with no fallback for every model — the root-cause #3 bug is
+> fixed. Training is nonetheless 2.2–4.0× slower than eager PyTorch on this rig: the
+> remaining gap is dispatch/threading overhead around the per-op compute, not a dead
+> compiled path. (AiDotNet PR #1469 reported the compiled training plan beating
+> `torch.compile`/TorchInductor ~6× on an MLP; this table is vs *eager* PyTorch,
+> which has no compile warmup to amortize and wins here.)
 
-> Memory: AiDotNet's higher RSS in this rig is dominated by the OpenCL backend kernel cache (591 kernels compiled at startup ≈ 2-3 GB) which is one-time / amortized across all models in a process, not per-model. The PyTorch RSS does not include a comparable GPU runtime here because CUDA was not available (CPU build of torch). This is not the apples-to-apples memory comparison the prior `GC.GetTotalMemory()` vs `psutil` numbers tried to make either — RSS is correct as a metric, but the OpenCL cache makes a CPU-only AiDotNet process look heavier than the model itself.
+> **LSTM training improved ~9×** (26.5 s → 2.82 s) — the biggest single change this
+> run — from the fused-recurrence forward+backward kernels (Tensors #503/#505/#523)
+> plus the now-engaged compiled optimizer step. The remaining 4× training gap and
+> the bs≥32 inference gap are BPTT/recurrent-step overhead vs PyTorch's fused
+> OneDNN/MKL `nn.LSTM`.
+
+> **CNN inference wins at bs=128** (5.69 ms vs PyTorch 8.00 ms) and is within ~15%
+> at smaller batches — the "uniformly slower" framing does not hold for CNN.
+
+> **Transformer** is where AiDotNet trails most (5–16× on inference at bs≥8). The
+> encoder attention `Predict()` walk does not yet route to the fused-MHA/SDPA path
+> the Tensors micro-benchmarks win on; that wiring is the largest remaining gap.
+
+> **`mlp-fused`** (AiDotNet-only variant calling `IEngine.MlpForward` directly) runs
+> bs=128 inference at **1.04 ms** vs the high-level `Predict()` MLP's 1.24 ms — the
+> generic `FeedForwardNeuralNetwork.Predict` path still does not fully exploit the
+> fused multi-layer kernel even on 0.207.13.
+
+> Memory: AiDotNet's RSS still includes the one-time OpenCL kernel-cache compile at
+> startup even with `AIDOTNET_DISABLE_GPU=1` setting the engine to CPU; it is a fixed
+> per-process cost amortized across all models, not per-model overhead. RSS is the
+> correct metric (matches `psutil` on the PyTorch side) but is not a clean
+> model-weight comparison.
 
 Regression endpoint comparison (small + large CSV)
 --------------------------------------------------
@@ -183,14 +241,19 @@ cd aidotnet-benchmarks && dotnet restore && dotnet build -c Release
 # 2. Install Python deps
 cd ../pytorch-benchmarks && python -m pip install -e .
 
-# 3. Per-model scaffold (LSTM now finishes on 0.207.9 / Tensors 0.86.4)
-cd ../aidotnet-benchmarks && dotnet run --no-build -c Release -- \
-    --models mlp,cnn,lstm,transformer \
+# 3. Per-model scaffold (AiDotNet 0.207.13 / Tensors 0.91.1).
+#    Pin CPU + threads on both sides; AISEVAL_FUSED_DIAG=1 prints whether the
+#    compiled/fused training step engaged (expect "Hit=True" + 60 fused steps).
+cd ../aidotnet-benchmarks
+#   PowerShell: $env:AIDOTNET_DISABLE_GPU=1; $env:AIDOTNET_BLAS_THREADS=8; $env:AISEVAL_FUSED_DIAG=1
+AIDOTNET_DISABLE_GPU=1 AIDOTNET_BLAS_THREADS=8 AISEVAL_FUSED_DIAG=1 \
+  dotnet run --no-build -c Release -- \
+    --models mlp,cnn,lstm,transformer,mlp-fused \
     --epochs 3 --train-batches 20 --batch-size 64 \
     --inference-iterations 100 --warmup-iterations 10 \
     --output ../results/aidotnet.json
-cd ../pytorch-benchmarks && python src/pytorch_benchmarks \
-    --models mlp,cnn,lstm,transformer \
+cd ../pytorch-benchmarks && python -m pytorch_benchmarks \
+    --models mlp,cnn,lstm,transformer --device cpu --threads 8 \
     --epochs 3 --train-batches 20 --batch-size 64 \
     --inference-iterations 100 --warmup-iterations 10 \
     --output ../results/pytorch.json

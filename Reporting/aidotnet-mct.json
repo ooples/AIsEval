@@ -40,46 +40,50 @@
       "Parameters": 468874,
       "Training": {
         "EpochSeconds": [
-          0.666704,
-          0.370465,
-          0.368026
+          0.643919,
+          0.268056,
+          0.254936
         ],
-        "TotalSeconds": 1.406984,
-        "GradientSecondsAvg": 0.016779,
-        "DataLoadingSecondsAvg": 0.000473,
+        "TotalSeconds": 1.1689,
+        "GradientSecondsAvg": 0.018668,
+        "DataLoadingSecondsAvg": 0.00077,
         "Resources": {
-          "ManagedRssMbPeak": 478.09,
-          "NvidiaSmiSample": "10, 1015"
+          "ManagedRssMbPeak": 90.812,
+          "NvidiaSmiSample": "5, 848"
         }
       },
       "Inference": [
         {
           "BatchSize": 1,
-          "WarmupSecondsAvg": 0.004839,
-          "SteadyStateLatencyMsAvg": 5.296,
-          "ThroughputSamplesPerSecond": 188.807,
-          "MemoryMbPeak": 850.695
+          "WarmupSecondsAvg": 0.002858,
+          "SteadyStateLatencyMsAvg": 0.218,
+          "SteadyStateLatencyMsP95": 0.282,
+          "ThroughputSamplesPerSecond": 4589.935,
+          "MemoryMbPeak": 99.613
         },
         {
           "BatchSize": 8,
-          "WarmupSecondsAvg": 0.004911,
-          "SteadyStateLatencyMsAvg": 5.695,
-          "ThroughputSamplesPerSecond": 1404.618,
-          "MemoryMbPeak": 1258.328
+          "WarmupSecondsAvg": 0.002544,
+          "SteadyStateLatencyMsAvg": 0.863,
+          "SteadyStateLatencyMsP95": 2.056,
+          "ThroughputSamplesPerSecond": 9271.858,
+          "MemoryMbPeak": 103.441
         },
         {
           "BatchSize": 32,
-          "WarmupSecondsAvg": 0.009246,
-          "SteadyStateLatencyMsAvg": 6.957,
-          "ThroughputSamplesPerSecond": 4599.757,
-          "MemoryMbPeak": 1703.613
+          "WarmupSecondsAvg": 0.004538,
+          "SteadyStateLatencyMsAvg": 0.851,
+          "SteadyStateLatencyMsP95": 2.152,
+          "ThroughputSamplesPerSecond": 37602.688,
+          "MemoryMbPeak": 104.113
         },
         {
           "BatchSize": 128,
-          "WarmupSecondsAvg": 0.007913,
-          "SteadyStateLatencyMsAvg": 8.935,
-          "ThroughputSamplesPerSecond": 14326.061,
-          "MemoryMbPeak": 2229.633
+          "WarmupSecondsAvg": 0.010417,
+          "SteadyStateLatencyMsAvg": 1.24,
+          "SteadyStateLatencyMsP95": 2.188,
+          "ThroughputSamplesPerSecond": 103251.536,
+          "MemoryMbPeak": 106.203
         }
       ]
     },
@@ -89,46 +93,103 @@
       "Parameters": 20490,
       "Training": {
         "EpochSeconds": [
-          0.780197,
-          1.190731,
-          0.900408
+          0.995214,
+          0.833066,
+          0.733239
         ],
-        "TotalSeconds": 2.871373,
-        "GradientSecondsAvg": 0.044385,
-        "DataLoadingSecondsAvg": 0.000564,
+        "TotalSeconds": 2.561544,
+        "GradientSecondsAvg": 0.041847,
+        "DataLoadingSecondsAvg": 0.000842,
         "Resources": {
-          "ManagedRssMbPeak": 2913.559,
-          "NvidiaSmiSample": "16, 2817"
+          "ManagedRssMbPeak": 180.758,
+          "NvidiaSmiSample": "4, 848"
         }
       },
       "Inference": [
         {
           "BatchSize": 1,
-          "WarmupSecondsAvg": 0.000764,
-          "SteadyStateLatencyMsAvg": 1.054,
-          "ThroughputSamplesPerSecond": 948.516,
-          "MemoryMbPeak": 2568.98
+          "WarmupSecondsAvg": 0.000739,
+          "SteadyStateLatencyMsAvg": 0.4,
+          "SteadyStateLatencyMsP95": 0.611,
+          "ThroughputSamplesPerSecond": 2497.671,
+          "MemoryMbPeak": 179.887
         },
         {
           "BatchSize": 8,
-          "WarmupSecondsAvg": 0.001004,
-          "SteadyStateLatencyMsAvg": 1.16,
-          "ThroughputSamplesPerSecond": 6896.855,
-          "MemoryMbPeak": 2568.98
+          "WarmupSecondsAvg": 0.001341,
+          "SteadyStateLatencyMsAvg": 0.933,
+          "SteadyStateLatencyMsP95": 1.354,
+          "ThroughputSamplesPerSecond": 8577.166,
+          "MemoryMbPeak": 180.469
         },
         {
           "BatchSize": 32,
-          "WarmupSecondsAvg": 0.002227,
-          "SteadyStateLatencyMsAvg": 2.682,
-          "ThroughputSamplesPerSecond": 11930.269,
-          "MemoryMbPeak": 2569.172
+          "WarmupSecondsAvg": 0.001866,
+          "SteadyStateLatencyMsAvg": 2.094,
+          "SteadyStateLatencyMsP95": 2.76,
+          "ThroughputSamplesPerSecond": 15278.146,
+          "MemoryMbPeak": 185.77
         },
         {
           "BatchSize": 128,
-          "WarmupSecondsAvg": 0.010739,
-          "SteadyStateLatencyMsAvg": 6.21,
-          "ThroughputSamplesPerSecond": 20612.095,
-          "MemoryMbPeak": 2643.461
+          "WarmupSecondsAvg": 0.006356,
+          "SteadyStateLatencyMsAvg": 5.692,
+          "SteadyStateLatencyMsP95": 6.747,
+          "ThroughputSamplesPerSecond": 22488.698,
+          "MemoryMbPeak": 193.238
+        }
+      ]
+    },
+    {
+      "Model": "lstm",
+      "Backend": "AiDotNetNeuralNetwork",
+      "Parameters": 24832,
+      "Training": {
+        "EpochSeconds": [
+          1.216804,
+          0.803937,
+          0.79871
+        ],
+        "TotalSeconds": 2.819469,
+        "GradientSecondsAvg": 0.046112,
+        "DataLoadingSecondsAvg": 0.000876,
+        "Resources": {
+          "ManagedRssMbPeak": 290.238,
+          "NvidiaSmiSample": "4, 848"
+        }
+      },
+      "Inference": [
+        {
+          "BatchSize": 1,
+          "WarmupSecondsAvg": 0.000761,
+          "SteadyStateLatencyMsAvg": 0.506,
+          "SteadyStateLatencyMsP95": 0.237,
+          "ThroughputSamplesPerSecond": 1978.063,
+          "MemoryMbPeak": 226.398
+        },
+        {
+          "BatchSize": 8,
+          "WarmupSecondsAvg": 0.000413,
+          "SteadyStateLatencyMsAvg": 0.438,
+          "SteadyStateLatencyMsP95": 0.533,
+          "ThroughputSamplesPerSecond": 18250.84,
+          "MemoryMbPeak": 226.43
+        },
+        {
+          "BatchSize": 32,
+          "WarmupSecondsAvg": 0.002218,
+          "SteadyStateLatencyMsAvg": 1.691,
+          "SteadyStateLatencyMsP95": 2.8,
+          "ThroughputSamplesPerSecond": 18919.63,
+          "MemoryMbPeak": 226.316
+        },
+        {
+          "BatchSize": 128,
+          "WarmupSecondsAvg": 0.005609,
+          "SteadyStateLatencyMsAvg": 5.346,
+          "SteadyStateLatencyMsP95": 6.491,
+          "ThroughputSamplesPerSecond": 23944.38,
+          "MemoryMbPeak": 296.324
         }
       ]
     },
@@ -138,46 +199,103 @@
       "Parameters": 51840,
       "Training": {
         "EpochSeconds": [
-          5.439298,
-          5.334065,
-          5.410239
+          2.781425,
+          2.445549,
+          2.488708
         ],
-        "TotalSeconds": 16.183634,
-        "GradientSecondsAvg": 0.182699,
-        "DataLoadingSecondsAvg": 0.000623,
+        "TotalSeconds": 7.715705,
+        "GradientSecondsAvg": 0.127789,
+        "DataLoadingSecondsAvg": 0.000804,
         "Resources": {
-          "ManagedRssMbPeak": 3506.781,
-          "NvidiaSmiSample": "29, 3101"
+          "ManagedRssMbPeak": 334.367,
+          "NvidiaSmiSample": "4, 848"
         }
       },
       "Inference": [
         {
           "BatchSize": 1,
-          "WarmupSecondsAvg": 0.009419,
-          "SteadyStateLatencyMsAvg": 9.743,
-          "ThroughputSamplesPerSecond": 102.643,
-          "MemoryMbPeak": 3479.336
+          "WarmupSecondsAvg": 0.001456,
+          "SteadyStateLatencyMsAvg": 0.934,
+          "SteadyStateLatencyMsP95": 1.633,
+          "ThroughputSamplesPerSecond": 1070.939,
+          "MemoryMbPeak": 292.121
         },
         {
           "BatchSize": 8,
-          "WarmupSecondsAvg": 0.018173,
-          "SteadyStateLatencyMsAvg": 22.13,
-          "ThroughputSamplesPerSecond": 361.492,
-          "MemoryMbPeak": 3526.434
+          "WarmupSecondsAvg": 0.005759,
+          "SteadyStateLatencyMsAvg": 5.631,
+          "SteadyStateLatencyMsP95": 7.166,
+          "ThroughputSamplesPerSecond": 1420.638,
+          "MemoryMbPeak": 345.301
         },
         {
           "BatchSize": 32,
-          "WarmupSecondsAvg": 0.057726,
-          "SteadyStateLatencyMsAvg": 55.533,
-          "ThroughputSamplesPerSecond": 576.229,
-          "MemoryMbPeak": 3372.035
+          "WarmupSecondsAvg": 0.01177,
+          "SteadyStateLatencyMsAvg": 13.576,
+          "SteadyStateLatencyMsP95": 28.579,
+          "ThroughputSamplesPerSecond": 2357.077,
+          "MemoryMbPeak": 330.746
         },
         {
           "BatchSize": 128,
-          "WarmupSecondsAvg": 0.178027,
-          "SteadyStateLatencyMsAvg": 233.245,
-          "ThroughputSamplesPerSecond": 548.779,
-          "MemoryMbPeak": 5261.934
+          "WarmupSecondsAvg": 0.050631,
+          "SteadyStateLatencyMsAvg": 47.118,
+          "SteadyStateLatencyMsP95": 60.273,
+          "ThroughputSamplesPerSecond": 2716.576,
+          "MemoryMbPeak": 413.141
+        }
+      ]
+    },
+    {
+      "Model": "mlp-fused",
+      "Backend": "AiDotNetNeuralNetwork",
+      "Parameters": 468874,
+      "Training": {
+        "EpochSeconds": [
+          0.011581,
+          0.008543,
+          0.008463
+        ],
+        "TotalSeconds": 0.028607,
+        "GradientSecondsAvg": 2E-06,
+        "DataLoadingSecondsAvg": 0.000474,
+        "Resources": {
+          "ManagedRssMbPeak": 384.387,
+          "NvidiaSmiSample": "4, 848"
+        }
+      },
+      "Inference": [
+        {
+          "BatchSize": 1,
+          "WarmupSecondsAvg": 0.000797,
+          "SteadyStateLatencyMsAvg": 0.491,
+          "SteadyStateLatencyMsP95": 0.552,
+          "ThroughputSamplesPerSecond": 2036.245,
+          "MemoryMbPeak": 390.625
+        },
+        {
+          "BatchSize": 8,
+          "WarmupSecondsAvg": 0.000339,
+          "SteadyStateLatencyMsAvg": 0.518,
+          "SteadyStateLatencyMsP95": 0.676,
+          "ThroughputSamplesPerSecond": 15437.191,
+          "MemoryMbPeak": 390.629
+        },
+        {
+          "BatchSize": 32,
+          "WarmupSecondsAvg": 0.000551,
+          "SteadyStateLatencyMsAvg": 0.877,
+          "SteadyStateLatencyMsP95": 1.076,
+          "ThroughputSamplesPerSecond": 36469.522,
+          "MemoryMbPeak": 390.922
+        },
+        {
+          "BatchSize": 128,
+          "WarmupSecondsAvg": 0.000946,
+          "SteadyStateLatencyMsAvg": 1.037,
+          "SteadyStateLatencyMsP95": 1.408,
+          "ThroughputSamplesPerSecond": 123400.018,
+          "MemoryMbPeak": 391.223
         }
       ]
     }
