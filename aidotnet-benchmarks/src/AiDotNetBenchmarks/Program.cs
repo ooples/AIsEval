@@ -253,6 +253,23 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 warmup.Add(timer.Elapsed.TotalSeconds);
             }
 
+            // Settle the managed heap before the steady-state measurement so the
+            // p95 latency reflects steady-state INFERENCE, not a GC pause inherited
+            // from the preceding training phase (or the prior batch size). The
+            // benchmark trains and infers in one process; without this, the large
+            // post-training heap triggers a background gen2 collection that lands
+            // inside the 100-iteration window and dominates the p95 of the tiny
+            // sub-0.2ms shapes (observed: mlp bs=1 p95 inflating to 7.5x PyTorch
+            // with heavy training vs ~1.5x with light, purely from this artifact).
+            // PyTorch's native runtime has no managed GC, so its inference p95 is
+            // uncontaminated by its training phase — settling ours makes the p95
+            // comparison apples-to-apples. A full blocking collect + finalizer
+            // drain + second collect reclaims training garbage and compacts before
+            // we start timing.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
             // Fair-comparison fix: PyTorch side measures RSS via
             // `psutil.Process(...).memory_info().rss` (whole-process resident
             // set, including native allocations under libtorch). The prior
