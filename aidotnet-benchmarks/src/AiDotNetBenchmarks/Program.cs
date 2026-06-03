@@ -421,11 +421,34 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
     protected Tensor<float> Input = Tensor<float>.Empty();
     protected Tensor<float> Label = Tensor<float>.Empty();
 
+    // Compiled-inference mode (AISEVAL_COMPILED=1): trace+compile the forward once
+    // per batch shape via the public CompileForward pre-warm, then run steady-state
+    // iterations through PredictCompiled (plan replay) instead of the per-layer
+    // eager walk. The benchmark satisfies compiled replay's documented contract —
+    // the SAME input tensor reference (and values) is fed every iteration. The
+    // value-stable rebind in CompiledModelHost makes replay safe for this pattern;
+    // a one-time eager-vs-compiled output check below guards correctness anyway.
+    // PredictCompiled is `protected internal`, so it is bound via reflection into a
+    // cached open delegate (no per-call reflection cost).
+    private static readonly bool UseCompiled = Environment.GetEnvironmentVariable("AISEVAL_COMPILED") == "1";
+    private static readonly System.Reflection.MethodInfo? PredictCompiledMi =
+        typeof(NeuralNetworkBase<float>).GetMethod(
+            "PredictCompiled",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+    private Func<Tensor<float>, Tensor<float>>? _predictCompiled;
+    private bool _compiledReady;
+    private bool _compiledChecked;
+
     protected AiDotNetBenchmarkModel(int seed)
     {
         Random = new Random(seed);
         Network = BuildNetwork();
         ParameterCount = Network.GetParameters().Length;
+        if (UseCompiled && PredictCompiledMi is not null)
+        {
+            _predictCompiled = (Func<Tensor<float>, Tensor<float>>)Delegate.CreateDelegate(
+                typeof(Func<Tensor<float>, Tensor<float>>), Network, PredictCompiledMi);
+        }
     }
 
     public long ParameterCount { get; }
@@ -453,12 +476,48 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
             labels[b * OutputClasses + cls] = 1f;
         }
         Label = new Tensor<float>(labels, [batchSize, OutputClasses]);
+
+        // Compiled mode: pre-warm the plan for this batch shape (trace + compile
+        // happens here, NOT inside the timed steady-state loop), and run a one-time
+        // eager-vs-compiled output comparison so a silently-wrong replay can never
+        // masquerade as a perf win.
+        if (UseCompiled && _predictCompiled is not null)
+        {
+            _compiledReady = Network.CompileForward(Input);
+            if (_compiledReady && !_compiledChecked)
+            {
+                _compiledChecked = true;
+                var eager = Network.Predict(Input);
+                var compiled = _predictCompiled(Input);
+                var e = eager.AsSpan(); var c = compiled.AsSpan();
+                double maxAbs = 0, maxMag = 1e-6;
+                for (int i = 0; i < e.Length; i++)
+                {
+                    maxAbs = Math.Max(maxAbs, Math.Abs(e[i] - c[i]));
+                    maxMag = Math.Max(maxMag, Math.Abs(e[i]));
+                }
+                if (e.Length != c.Length || maxAbs / maxMag > 1e-3)
+                {
+                    Console.WriteLine($"[bench] WARNING {GetType().Name}: compiled output diverges from eager (relErr={maxAbs / maxMag:E2}) — falling back to eager.");
+                    _compiledReady = false;
+                }
+            }
+            if (!_compiledReady)
+                Console.WriteLine($"[bench] {GetType().Name} bs={batchSize}: compiled plan unavailable — eager fallback.");
+        }
     }
 
     public void Forward()
     {
-        // Real inference: walks the layer stack, runs activations + ops.
-        var _ = Network.Predict(Input);
+        // Real inference. Compiled mode replays the traced plan (same input tensor
+        // reference every call — the documented replay contract); default walks the
+        // layer stack eagerly via Predict.
+        if (_compiledReady && _predictCompiled is not null)
+        {
+            var _ = _predictCompiled(Input);
+            return;
+        }
+        var __ = Network.Predict(Input);
     }
 
     public void Backward()
