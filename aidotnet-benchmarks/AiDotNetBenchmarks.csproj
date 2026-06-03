@@ -45,6 +45,6 @@
            * Tensors #488/#485 — fused QKV + transpose-fused / output-only SDPA.
            * Tensors #474 — small-batch native-BLAS thread cap inside MlpForward.
          These are what the fair-comparison JSON should reflect. -->
-    <PackageReference Include="AiDotNet.Tensors" Version="0.91.38-localfix" />
+    <PackageReference Include="AiDotNet.Tensors" Version="0.91.41-localfix" />
   </ItemGroup>
 </Project>
