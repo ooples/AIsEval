@@ -282,6 +282,19 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
             var steady = new List<double>();
             var peak = peakBefore;
 
+            // Opt-in per-op profiling (AISEVAL_OPPROFILE=1, optionally pinned to one
+            // batch size via AISEVAL_OPPROFILE_BS). Bridges the engine's Profiler.OpScope
+            // ranges to the legacy aggregator and prints a per-op breakdown after the
+            // steady-state loop — used to find which op dominates a losing shape.
+            var opProfile = Environment.GetEnvironmentVariable("AISEVAL_OPPROFILE") == "1"
+                && (Environment.GetEnvironmentVariable("AISEVAL_OPPROFILE_BS") is not { } bsStr
+                    || (int.TryParse(bsStr, out var bsTarget) && bsTarget == batchSize));
+            if (opProfile)
+            {
+                AiDotNet.Tensors.Engines.Optimization.PerformanceProfiler.Instance.Enabled = true;
+                AiDotNet.Tensors.Engines.Optimization.PerformanceProfiler.Instance.Clear();
+            }
+
             // Steady-state iterations collect forward-pass timings and track the
             // highest observed RSS for this batch size.
             for (var i = 0; i < options.InferenceIterations; i++)
@@ -293,6 +306,14 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 process.Refresh();
                 peak = Math.Max(peak, process.WorkingSet64 / 1024d / 1024d);
             }
+            if (opProfile)
+            {
+                var prof = AiDotNet.Tensors.Engines.Optimization.PerformanceProfiler.Instance;
+                Console.WriteLine($"[opprofile] {model.GetType().Name} bs={batchSize} ({options.InferenceIterations} iters):");
+                Console.WriteLine(prof.GenerateReport());
+                prof.Enabled = false;
+            }
+
             var totalSteady = steady.Sum();
             // p95 latency (symmetric with the PyTorch side): robust to the
             // rig-contention noise that swings the mean. Tensors perf gate is
