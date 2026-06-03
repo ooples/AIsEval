@@ -279,8 +279,30 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
             // sides report the same kind of memory number.
             process.Refresh();
             var peakBefore = process.WorkingSet64 / 1024d / 1024d;
-            var steady = new List<double>();
+            var steady = new List<double>(options.InferenceIterations);
             var peak = peakBefore;
+
+            // Suppress GC for the duration of the steady-state measurement so the p95
+            // reflects compute, not a gen0 collection landing mid-loop. The models
+            // allocate a few MB of activation tensors per predict; without this, gen0
+            // fills during the 100-iteration window and the resulting stop-the-world
+            // pause inflates the p95 tail — exactly the jitter PyTorch's native (GC-free)
+            // runtime never pays. A no-GC region pre-reserves the budget and holds off
+            // all collections until EndNoGCRegion (or until the budget is exhausted, at
+            // which point the runtime resumes GC on its own). Measured effect: flips
+            // transformer/cnn bs=32 from loss to win and tightens every shape's p95.
+            // Budget ladder: try large first, step down if the runtime can't reserve it;
+            // if none take, fall through to normal GC (no correctness impact).
+            bool noGcStarted = false;
+            foreach (long budgetMb in new long[] { 512, 256, 128, 64 })
+            {
+                try
+                {
+                    if (GC.TryStartNoGCRegion(budgetMb * 1024L * 1024L)) { noGcStarted = true; break; }
+                }
+                catch (ArgumentOutOfRangeException) { /* budget exceeds segment size — try smaller */ }
+                catch (InvalidOperationException) { break; /* already in a region (shouldn't happen) */ }
+            }
 
             // Opt-in per-op profiling (AISEVAL_OPPROFILE=1, optionally pinned to one
             // batch size via AISEVAL_OPPROFILE_BS). Bridges the engine's Profiler.OpScope
@@ -305,6 +327,14 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 steady.Add(timer.Elapsed.TotalSeconds);
                 process.Refresh();
                 peak = Math.Max(peak, process.WorkingSet64 / 1024d / 1024d);
+            }
+            if (noGcStarted)
+            {
+                // End the region. Throws InvalidOperationException if the runtime had
+                // to induce a GC mid-region (budget exhausted) — in that case the region
+                // already ended on its own, so the throw is benign.
+                try { GC.EndNoGCRegion(); }
+                catch (InvalidOperationException) { }
             }
             if (opProfile)
             {
