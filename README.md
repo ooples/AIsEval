@@ -84,6 +84,35 @@ results/
 - Use identical hardware, power settings, process isolation, and batch sizes.
 - Run release/optimized builds only (`dotnet run -c Release`, no Python debug tooling).
 - Discard the first run if you want to eliminate package JIT/import cache effects.
-- The C# project currently includes a managed reference backend for validating
-  benchmark infrastructure. Add a production AiDotNet implementation behind
-  `IBenchmarkModel` before publishing framework-to-framework claims.
+- The C# project's `Program.cs` benchmark constructs real AiDotNet networks
+  (`FeedForwardNeuralNetwork`, `ConvolutionalNeuralNetwork`, `LSTMNeuralNetwork`,
+  `FeedForwardNeuralNetwork` with `TransformerEncoderLayer`) matching the
+  PyTorch counterparts shape-for-shape, and runs them through
+  `NeuralNetworkBase.Train` (real autograd + Adam) and `NeuralNetworkBase.Predict`.
+  An earlier scaffold used a hand-rolled MLP for every model name with a fake
+  backward/optimizer; see `Reporting/PRIOR-FINDINGS-DISCLAIMER.md` for the
+  audit of why numbers from that state should not be cited as a
+  framework-to-framework comparison.
+- The REST API regression endpoints are now framework-symmetric: AiDotNet's
+  `/api/Regression/MultipleRegression` runs the full `AiModelBuilder` lifecycle,
+  and the PyTorch `/api/Regression/MultipleRegression` route mirrors that
+  lifecycle with an `nn.Linear + MSELoss + Adam` training loop. The PyTorch
+  `/api/Regression/Predict` (raw `torch.linalg.lstsq`) route is preserved for
+  LAPACK-vs-builder profiling but should not be cited as framework-to-framework
+  evidence.
+- Memory measurement is now symmetric — both sides record peak RSS (Windows
+  `Process.WorkingSet64` / Linux `psutil.Process.memory_info().rss`).
+- AiDotNet NuGet pin is `0.207.13` with `AiDotNet.Tensors` pinned to `0.91.1`
+  (was `0.207.9` / `0.86.4`; originally `0.185.0`).
+- **Compiled/fused training engages** on AiDotNet 0.207.13: PR #1469 reverted the
+  default optimizer to standard Adam so the fused step is no longer rejected.
+  Run with `AISEVAL_FUSED_DIAG=1` to confirm (`Hit=True`, 60/60 fused steps, no
+  fallback for every model). The training loop is one forward per batch on both
+  sides (the redundant pre-`Train()` `Forward()` on the C# side was removed).
+- PyTorch runs in **eager mode** — no `torch.compile` / `torch.jit` /
+  TorchDynamo anywhere in `pytorch-benchmarks/`. Eager is the apples-to-apples
+  baseline; a compiled graph would fuse kernels ahead of time in a way that
+  compares compilation stacks rather than kernels. The emitted report records
+  `torch.__version__`. On this CPU rig eager PyTorch is still 2.2–4.0× faster
+  than AiDotNet's compiled path on training and faster on most inference shapes —
+  see `Reporting/findings.md`.

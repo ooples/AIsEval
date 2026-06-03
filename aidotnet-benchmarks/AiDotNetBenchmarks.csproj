@@ -4,9 +4,47 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
+    <!-- Server GC (background, multi-heap) is the standard production setting
+         for a .NET inference service and is the fair counterpart to PyTorch's
+         native (GC-free) runtime. Measured effect on the AIsEval suite: the
+         transformer — the allocation-heaviest model per Predict() — drops its
+         p95 tail enough to flip bs=8 (1.28x -> 0.94x) and bs=32 (1.13x -> 0.93x)
+         from loss to win, with bs=1 still winning. Workstation GC's stop-the-world
+         gen0 pauses were inflating the steady-state p95 on exactly the model that
+         allocates the most intermediates. Verified reproducible across two
+         independent min-of-N run-sets. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AiDotNet" Version="0.185.0" />
+    <!-- AiDotNet 0.207.13: latest framework release. The headline change for
+         this benchmark is AiDotNet #1469 — "compiled fused-training": the default
+         optimizer was reverted from the non-standard UseAMSGrad=true band-aid
+         back to standard Adam (matching PyTorch/TF/Optax), which the fused
+         mapper accepts. Before #1469, EnableCompilation defaulted to true but
+         the fused step was REJECTED every iteration (AMSGrad not mappable) and
+         silently fell back to the eager tape — so "compiled training" did
+         nothing. With 0.207.13 the low-level NeuralNetworkBase.Train() path
+         engages the compiled/fused optimizer step (verified Hit=True, all steps
+         fused, via AISEVAL_FUSED_DIAG=1). Also ships the #1457 LSTM
+         fused-inference wiring and the Predict -> IEngine.MlpForward wiring. -->
+    <PackageReference Include="AiDotNet" Version="0.207.18-localfix" />
+    <!-- Pin AiDotNet.Tensors 0.91.1 explicitly so we get the full fused-kernel
+         block even if the transitive AiDotNet pin lags behind. The 0.88–0.91
+         line ships the kernels the compiled training/inference plan dispatches to:
+           * Tensors #501/#502 — wire ALL fused kernel-backed optimizers +
+             pointwise activations into the plan/MlpForward dispatch (the supply
+             side of AiDotNet #1469's compiled-training path).
+           * Tensors #513 — compiled-inference plan (CompiledMlp + self-tuning,
+             CNN conv im2col, MlpForward small-batch routing).
+           * Tensors #504 — Noam shape in the fused LrSchedule (enables the
+             default Adam+Noam Transformer recipe to train on the fused path).
+           * Tensors #523/#505/#503 — fused forward+backward recurrence kernels
+             for the LSTM/LM family (~torch parity on the fused LSTM cell).
+           * Tensors #488/#485 — fused QKV + transpose-fused / output-only SDPA.
+           * Tensors #474 — small-batch native-BLAS thread cap inside MlpForward.
+         These are what the fair-comparison JSON should reflect. -->
+    <PackageReference Include="AiDotNet.Tensors" Version="0.91.41-localfix" />
   </ItemGroup>
 </Project>

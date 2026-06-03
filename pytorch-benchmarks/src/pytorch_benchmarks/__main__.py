@@ -42,6 +42,7 @@ class InferenceBatchResult:
     batch_size: int
     warmup_seconds_avg: float
     steady_state_latency_ms_avg: float
+    steady_state_latency_ms_p95: float
     throughput_samples_per_second: float
     memory_mb_peak: float
 
@@ -247,10 +248,17 @@ def benchmark_inference(model: nn.Module, shape: tuple[int, ...], device: torch.
             rss_peak = max(rss_peak, process.memory_info().rss / 1024 / 1024)
         total = sum(steady)
         cuda_peak = torch.cuda.max_memory_allocated(device) / 1024 / 1024 if device.type == "cuda" else 0.0
+        # p95 latency: sort and take the 95th-percentile sample. Reporting p95
+        # alongside the mean makes the AiDotNet-vs-PyTorch comparison robust to
+        # the rig-contention noise that swings the mean (see Reporting/findings.md);
+        # the Tensors perf gate is "p95(ours) < median(PyTorch)".
+        steady_sorted = sorted(steady)
+        p95_idx = min(len(steady_sorted) - 1, int(round(0.95 * (len(steady_sorted) - 1))))
         results.append(InferenceBatchResult(
             batch_size=batch_size,
             warmup_seconds_avg=round(statistics.fmean(warmup_times), 6),
             steady_state_latency_ms_avg=round(statistics.fmean(steady) * 1000, 3),
+            steady_state_latency_ms_p95=round(steady_sorted[p95_idx] * 1000, 3),
             throughput_samples_per_second=round((iterations * batch_size) / total, 3),
             memory_mb_peak=round(max(rss_peak, cuda_peak), 3),
         ))
@@ -261,6 +269,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     seed = args.seed
     random.seed(seed)
     torch.manual_seed(seed)
+    # Thread pinning for a fair head-to-head: PyTorch defaults to all physical
+    # cores, which both (a) makes the comparison sensitive to rig contention and
+    # (b) isn't matched to whatever thread count the AiDotNet side uses. Pin both
+    # sides to the same --threads value (AiDotNet: AIDOTNET_BLAS_THREADS) so the
+    # numbers reflect the kernels, not the scheduler.
+    if args.threads and args.threads > 0:
+        torch.set_num_threads(args.threads)
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
@@ -281,6 +296,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "python": platform.python_version(),
         "torch": torch.__version__,
         "device": str(device),
+        "torch_num_threads": torch.get_num_threads(),
         "cuda_available": torch.cuda.is_available(),
         "results": [asdict(result) for result in model_results],
     }
@@ -296,6 +312,9 @@ def main() -> None:
     parser.add_argument("--inference-iterations", type=int, default=100)
     parser.add_argument("--warmup-iterations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument("--threads", type=int, default=0,
+                        help="Pin CPU thread count (0 = PyTorch default = all cores). "
+                             "Match the AiDotNet side's AIDOTNET_BLAS_THREADS for a fair comparison.")
     parser.add_argument("--output", type=Path, default=Path("results/pytorch.json"))
     args = parser.parse_args()
 
