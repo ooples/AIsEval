@@ -18,33 +18,29 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- AiDotNet 0.207.13: latest framework release. The headline change for
-         this benchmark is AiDotNet #1469 — "compiled fused-training": the default
-         optimizer was reverted from the non-standard UseAMSGrad=true band-aid
-         back to standard Adam (matching PyTorch/TF/Optax), which the fused
-         mapper accepts. Before #1469, EnableCompilation defaulted to true but
-         the fused step was REJECTED every iteration (AMSGrad not mappable) and
-         silently fell back to the eager tape — so "compiled training" did
-         nothing. With 0.207.13 the low-level NeuralNetworkBase.Train() path
-         engages the compiled/fused optimizer step (verified Hit=True, all steps
-         fused, via AISEVAL_FUSED_DIAG=1). Also ships the #1457 LSTM
-         fused-inference wiring and the Predict -> IEngine.MlpForward wiring. -->
-    <PackageReference Include="AiDotNet" Version="0.207.18-localfix" />
-    <!-- Pin AiDotNet.Tensors 0.91.1 explicitly so we get the full fused-kernel
-         block even if the transitive AiDotNet pin lags behind. The 0.88–0.91
-         line ships the kernels the compiled training/inference plan dispatches to:
-           * Tensors #501/#502 — wire ALL fused kernel-backed optimizers +
-             pointwise activations into the plan/MlpForward dispatch (the supply
-             side of AiDotNet #1469's compiled-training path).
-           * Tensors #513 — compiled-inference plan (CompiledMlp + self-tuning,
-             CNN conv im2col, MlpForward small-batch routing).
-           * Tensors #504 — Noam shape in the fused LrSchedule (enables the
-             default Adam+Noam Transformer recipe to train on the fused path).
-           * Tensors #523/#505/#503 — fused forward+backward recurrence kernels
-             for the LSTM/LM family (~torch parity on the fused LSTM cell).
-           * Tensors #488/#485 — fused QKV + transpose-fused / output-only SDPA.
-           * Tensors #474 — small-batch native-BLAS thread cap inside MlpForward.
-         These are what the fair-comparison JSON should reflect. -->
-    <PackageReference Include="AiDotNet.Tensors" Version="0.91.41-localfix" />
+    <!-- AiDotNet 0.207.18: latest PUBLIC release — the final-results numbers in
+         Reporting/findings.md are pinned to publicly released packages only, so
+         anyone can reproduce them from NuGet. Includes AiDotNet #1469
+         ("compiled fused-training": standard-Adam default the fused mapper
+         accepts; verified Hit=True, all steps fused, via AISEVAL_FUSED_DIAG=1),
+         the #1457 LSTM fused-inference wiring, and the Predict ->
+         IEngine.MlpForward wiring. KNOWN GAP: the encoder/MHA forward does not
+         yet route onto the fused-SDPA/panel-GEMM engine paths — that wiring is
+         in the not-yet-released AiDotNet PR #1489 (measured 3-6x on Transformer
+         inference; see the Known-release-gap note in findings.md). -->
+    <PackageReference Include="AiDotNet" Version="0.207.18" />
+    <!-- Pin AiDotNet.Tensors 0.91.8 explicitly (latest public release) so we
+         get the full CPU kernel stack even if the transitive AiDotNet pin lags:
+           * Tensors #538 — 6xN asm panel GEMM kernel, large-K OpenBLAS-on-pool
+             routing, batch-parallel LSTM recurrence, fused fs=64 LayerNorm,
+             SDPA/softmax fixes (the AiDotNet#1478 CPU inference stack).
+           * Tensors #540 — compiled-inference fixes (MaxPool graph recording,
+             FusedLinear cached-B replay, pack-tile consume gates) + the
+             InferenceWeightCache stale-pack invalidation surface.
+           * Tensors #501/#502/#513 — fused optimizers/activations + compiled
+             plan dispatch; #523/#505/#503 — fused LSTM recurrence kernels;
+           * Tensors #488/#485 — fused QKV + SDPA; #474 — small-batch BLAS cap.
+         These are what the fair-comparison JSON reflects. -->
+    <PackageReference Include="AiDotNet.Tensors" Version="0.91.8" />
   </ItemGroup>
 </Project>

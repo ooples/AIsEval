@@ -47,6 +47,71 @@ check on direction.
 > does. Removing it (one forward per batch on both sides) cut AiDotNet training
 > time ~15% on Transformer (9.42 s → 7.72 s) and a few % elsewhere.
 
+Final results (2026-06-04) — released packages, interleaved min-of-8
+--------------------------------------------------------------------
+
+Final run for this PR, on **publicly released packages only**: AiDotNet
+**0.207.18** + AiDotNet.Tensors **0.91.8** (carrying the merged CPU kernel
+stack — 6×N asm panel GEMM, OpenBLAS-on-pool, batch-parallel LSTM, fused
+LayerNorm, compiled-inference fixes) vs PyTorch **2.11.0+cpu eager**, both
+8 threads, GPU disabled, same rig, same session.
+
+**Methodology:** 8 interleaved rounds (one full AiDotNet run, then one full
+PyTorch run, ×8). Per shape, each side's score is the **minimum p95 latency
+across its 8 rounds** — this rig is shared/noisy, and interleaving + min-of-N
+cancels thermal/load drift symmetrically instead of letting one side inherit
+a quiet window. Raw per-round JSON: `Reporting/final-2026-06-04/`.
+
+**Inference — min-of-8 p95 latency (ms), lower is better. AiDotNet wins 3/16:**
+
+| Model | bs | PyTorch | AiDotNet | AiD/PT | winner |
+|---|---|---|---|---|---|
+| MLP | 1 | **0.099** | 0.205 | 2.07× | PyTorch |
+| MLP | 8 | **0.128** | 0.279 | 2.18× | PyTorch |
+| MLP | 32 | **0.207** | 0.444 | 2.14× | PyTorch |
+| MLP | 128 | **0.534** | 1.458 | 2.73× | PyTorch |
+| CNN | 1 | **0.185** | 0.802 | 4.34× | PyTorch |
+| CNN | 8 | **0.684** | 1.477 | 2.16× | PyTorch |
+| CNN | 32 | **1.594** | 2.149 | 1.35× | PyTorch |
+| CNN | 128 | 6.205 | **5.206** | 0.84× | **AiDotNet** |
+| LSTM | 1 | 0.263 | **0.179** | 0.68× | **AiDotNet** |
+| LSTM | 8 | 0.567 | **0.409** | 0.72× | **AiDotNet** |
+| LSTM | 32 | **0.844** | 1.690 | 2.00× | PyTorch |
+| LSTM | 128 | **2.405** | 3.567 | 1.48× | PyTorch |
+| Transformer | 1 | **0.690** | 0.784 | 1.14× | PyTorch |
+| Transformer | 8 | **1.073** | 5.098 | 4.75× | PyTorch |
+| Transformer | 32 | **2.358** | 20.566 | 8.72× | PyTorch |
+| Transformer | 128 | **6.922** | 45.904 | 6.63× | PyTorch |
+
+**Training — min-of-8 best epoch wall (s). PyTorch wins 4/4:**
+
+| Model | PyTorch | AiDotNet | gap |
+|---|---|---|---|
+| MLP | **0.062** | 0.249 | 4.0× |
+| CNN | **0.146** | 0.647 | 4.4× |
+| LSTM | **0.106** | 0.837 | 7.9× |
+| Transformer | **0.766** | 1.870 | 2.4× |
+
+**Scorecard: AiDotNet 3/16 inference shapes (LSTM bs=1 at 1.5× faster, LSTM
+bs=8 at 1.4×, CNN bs=128 at 1.2×); PyTorch eager takes the other 13 inference
+shapes and all 4 training rows.**
+
+What moved since the 2026-06-01 refresh (engine 0.91.1 → 0.91.8): the
+batch-parallel LSTM recurrence turned LSTM bs=1/bs=8 from near-ties into
+clear AiDotNet wins, and CNN bs=128 held. MLP and Transformer are
+structurally unchanged.
+
+> **Known release gap (Transformer/MLP):** the AiDotNet-side wiring that
+> routes the encoder/MHA forward onto the fused-SDPA/panel-GEMM engine paths
+> lives in a not-yet-released AiDotNet branch (AiDotNet PR #1489). A probe
+> with a pre-release build of that branch (same released Tensors 0.91.8)
+> recovers Transformer to 0.93 / 1.72 / 3.35 / 13.08 ms across the four
+> batch sizes — a 3–6× improvement over the released 0.207.18 numbers above,
+> though still behind PyTorch eager on those shapes on this rig. This table
+> will be refreshed when that wiring ships in a public release; the numbers
+> above are what a user gets from NuGet today, which is the honest baseline
+> for this PR.
+
 ### Why AiDotNet trailed here — three root causes (2026-05-29 deep-dive)
 
 The Tensors micro-benchmarks beat PyTorch-CPU on the raw fused ops, yet this
@@ -119,8 +184,8 @@ report records `torch.__version__` so the mode/version is auditable per run.
 | Python | 3.13.3 |
 | PyTorch | 2.11.0+cpu (eager), 8 threads |
 | .NET | 10.0.8 |
-| AiDotNet | 0.207.13 NuGet (assembly 0.204.0.0); was 0.185.0 pre-fix |
-| AiDotNet.Tensors | 0.91.1 NuGet |
+| AiDotNet | **0.207.18** NuGet (final results); 0.207.13 for the 2026-06-01 refresh; was 0.185.0 pre-fix |
+| AiDotNet.Tensors | **0.91.8** NuGet (final results); 0.91.1 for the 2026-06-01 refresh |
 | CPU threads | 8 (`AIDOTNET_BLAS_THREADS=8` ↔ PyTorch `--threads 8`) |
 | Device | CPU only (`AIDOTNET_DISABLE_GPU=1`) |
 
@@ -241,9 +306,12 @@ cd aidotnet-benchmarks && dotnet restore && dotnet build -c Release
 # 2. Install Python deps
 cd ../pytorch-benchmarks && python -m pip install -e .
 
-# 3. Per-model scaffold (AiDotNet 0.207.13 / Tensors 0.91.1).
+# 3. Per-model scaffold (AiDotNet 0.207.18 / Tensors 0.91.8 — released).
 #    Pin CPU + threads on both sides; AISEVAL_FUSED_DIAG=1 prints whether the
 #    compiled/fused training step engaged (expect "Hit=True" + 60 fused steps).
+#    For the final-results table, this pair of commands was run 8 times,
+#    interleaved (AiDotNet then PyTorch, x8), and each shape scored as the
+#    MINIMUM p95 across its 8 rounds — see "Final results (2026-06-04)".
 cd ../aidotnet-benchmarks
 #   PowerShell: $env:AIDOTNET_DISABLE_GPU=1; $env:AIDOTNET_BLAS_THREADS=8; $env:AISEVAL_FUSED_DIAG=1
 AIDOTNET_DISABLE_GPU=1 AIDOTNET_BLAS_THREADS=8 AISEVAL_FUSED_DIAG=1 \
