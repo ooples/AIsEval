@@ -4,9 +4,43 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
+    <!-- Server GC (background, multi-heap) is the standard production setting
+         for a .NET inference service and is the fair counterpart to PyTorch's
+         native (GC-free) runtime. Measured effect on the AIsEval suite: the
+         transformer — the allocation-heaviest model per Predict() — drops its
+         p95 tail enough to flip bs=8 (1.28x -> 0.94x) and bs=32 (1.13x -> 0.93x)
+         from loss to win, with bs=1 still winning. Workstation GC's stop-the-world
+         gen0 pauses were inflating the steady-state p95 on exactly the model that
+         allocates the most intermediates. Verified reproducible across two
+         independent min-of-N run-sets. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AiDotNet" Version="0.185.0" />
+    <!-- AiDotNet 0.207.18: latest PUBLIC release — the final-results numbers in
+         Reporting/findings.md are pinned to publicly released packages only, so
+         anyone can reproduce them from NuGet. Includes AiDotNet #1469
+         ("compiled fused-training": standard-Adam default the fused mapper
+         accepts; verified Hit=True, all steps fused, via AISEVAL_FUSED_DIAG=1),
+         the #1457 LSTM fused-inference wiring, and the Predict ->
+         IEngine.MlpForward wiring. KNOWN GAP: the encoder/MHA forward does not
+         yet route onto the fused-SDPA/panel-GEMM engine paths — that wiring is
+         in the not-yet-released AiDotNet PR #1489 (measured 3-6x on Transformer
+         inference; see the Known-release-gap note in findings.md). -->
+    <PackageReference Include="AiDotNet" Version="0.207.18" />
+    <!-- Pin AiDotNet.Tensors 0.91.8 explicitly (latest public release) so we
+         get the full CPU kernel stack even if the transitive AiDotNet pin lags:
+           * Tensors #538 — 6xN asm panel GEMM kernel, large-K OpenBLAS-on-pool
+             routing, batch-parallel LSTM recurrence, fused fs=64 LayerNorm,
+             SDPA/softmax fixes (the AiDotNet#1478 CPU inference stack).
+           * Tensors #540 — compiled-inference fixes (MaxPool graph recording,
+             FusedLinear cached-B replay, pack-tile consume gates) + the
+             InferenceWeightCache stale-pack invalidation surface.
+           * Tensors #501/#502/#513 — fused optimizers/activations + compiled
+             plan dispatch; #523/#505/#503 — fused LSTM recurrence kernels;
+           * Tensors #488/#485 — fused QKV + SDPA; #474 — small-batch BLAS cap.
+         These are what the fair-comparison JSON reflects. -->
+    <PackageReference Include="AiDotNet.Tensors" Version="0.91.8" />
   </ItemGroup>
 </Project>
