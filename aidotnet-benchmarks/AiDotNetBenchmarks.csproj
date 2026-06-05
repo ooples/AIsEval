@@ -23,13 +23,12 @@
          anyone can reproduce them from NuGet. Includes AiDotNet #1469
          ("compiled fused-training": standard-Adam default the fused mapper
          accepts; verified Hit=True, all steps fused, via AISEVAL_FUSED_DIAG=1),
-         the #1457 LSTM fused-inference wiring, and the Predict ->
-         IEngine.MlpForward wiring. KNOWN GAP: the encoder/MHA forward does not
-         yet route onto the fused-SDPA/panel-GEMM engine paths — that wiring is
-         in the not-yet-released AiDotNet PR #1489 (measured 3-6x on Transformer
-         inference; see the Known-release-gap note in findings.md). -->
-    <PackageReference Include="AiDotNet" Version="0.207.18" />
-    <!-- Pin AiDotNet.Tensors 0.91.8 explicitly (latest public release) so we
+         the #1457 LSTM fused-inference wiring, the Predict ->
+         IEngine.MlpForward wiring, and — new in 0.208.0 — the AiDotNet #1489
+         fused-MHA/SDPA encoder wiring (the 3-6x Transformer-inference gap
+         that earlier releases carried as a known gap; see findings.md). -->
+    <PackageReference Include="AiDotNet" Version="0.208.0" />
+    <!-- Pin AiDotNet.Tensors 0.91.11 explicitly (latest public release) so we
          get the full CPU kernel stack even if the transitive AiDotNet pin lags:
            * Tensors #538 — 6xN asm panel GEMM kernel, large-K OpenBLAS-on-pool
              routing, batch-parallel LSTM recurrence, fused fs=64 LayerNorm,
@@ -41,6 +40,6 @@
              plan dispatch; #523/#505/#503 — fused LSTM recurrence kernels;
            * Tensors #488/#485 — fused QKV + SDPA; #474 — small-batch BLAS cap.
          These are what the fair-comparison JSON reflects. -->
-    <PackageReference Include="AiDotNet.Tensors" Version="0.91.8" />
+    <PackageReference Include="AiDotNet.Tensors" Version="0.91.11" />
   </ItemGroup>
 </Project>

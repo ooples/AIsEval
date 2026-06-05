@@ -1,0 +1,130 @@
+[
+  {
+    "model": "cnn",
+    "batch": 1,
+    "ad_p95_ms": 0.41,
+    "pt_p95_ms": 0.241,
+    "ratio": 1.701,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "cnn",
+    "batch": 8,
+    "ad_p95_ms": 1.227,
+    "pt_p95_ms": 0.85,
+    "ratio": 1.444,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "cnn",
+    "batch": 32,
+    "ad_p95_ms": 1.939,
+    "pt_p95_ms": 1.943,
+    "ratio": 0.998,
+    "winner": "AiDotNet"
+  },
+  {
+    "model": "cnn",
+    "batch": 128,
+    "ad_p95_ms": 5.534,
+    "pt_p95_ms": 7.035,
+    "ratio": 0.787,
+    "winner": "AiDotNet"
+  },
+  {
+    "model": "lstm",
+    "batch": 1,
+    "ad_p95_ms": 0.224,
+    "pt_p95_ms": 0.317,
+    "ratio": 0.707,
+    "winner": "AiDotNet"
+  },
+  {
+    "model": "lstm",
+    "batch": 8,
+    "ad_p95_ms": 0.457,
+    "pt_p95_ms": 0.648,
+    "ratio": 0.705,
+    "winner": "AiDotNet"
+  },
+  {
+    "model": "lstm",
+    "batch": 32,
+    "ad_p95_ms": 1.678,
+    "pt_p95_ms": 1.111,
+    "ratio": 1.51,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "lstm",
+    "batch": 128,
+    "ad_p95_ms": 3.635,
+    "pt_p95_ms": 2.346,
+    "ratio": 1.549,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "mlp",
+    "batch": 1,
+    "ad_p95_ms": 0.229,
+    "pt_p95_ms": 0.127,
+    "ratio": 1.803,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "mlp",
+    "batch": 8,
+    "ad_p95_ms": 0.305,
+    "pt_p95_ms": 0.127,
+    "ratio": 2.402,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "mlp",
+    "batch": 32,
+    "ad_p95_ms": 0.611,
+    "pt_p95_ms": 0.259,
+    "ratio": 2.359,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "mlp",
+    "batch": 128,
+    "ad_p95_ms": 1.536,
+    "pt_p95_ms": 0.739,
+    "ratio": 2.078,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "transformer",
+    "batch": 1,
+    "ad_p95_ms": 0.714,
+    "pt_p95_ms": 0.753,
+    "ratio": 0.948,
+    "winner": "AiDotNet"
+  },
+  {
+    "model": "transformer",
+    "batch": 8,
+    "ad_p95_ms": 1.745,
+    "pt_p95_ms": 1.151,
+    "ratio": 1.516,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "transformer",
+    "batch": 32,
+    "ad_p95_ms": 4.276,
+    "pt_p95_ms": 2.565,
+    "ratio": 1.667,
+    "winner": "PyTorch"
+  },
+  {
+    "model": "transformer",
+    "batch": 128,
+    "ad_p95_ms": 26.335,
+    "pt_p95_ms": 7.238,
+    "ratio": 3.638,
+    "winner": "PyTorch"
+  }
+]
