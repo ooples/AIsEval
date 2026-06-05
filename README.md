@@ -38,9 +38,10 @@ schema.
 
 ## Quick Start
 
-### PyTorch
+### One-time setup
 
 ```bash
+# Python side
 cd pytorch-benchmarks
 python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
@@ -48,23 +49,69 @@ source .venv/bin/activate        # macOS/Linux
 # or: .\.venv\Scripts\Activate.ps1  # Windows PowerShell; do not use source here
 python -m pip install --upgrade pip
 python -m pip install -e .
+
+# C# side
+cd ../aidotnet-benchmarks
+dotnet restore
+dotnet build -c Release
+```
+
+### Running the four-model benchmark (controllers — the standard workflow)
+
+Everything runs through web endpoints, like the regression benchmarks. Start
+both hosts, then one POST runs both frameworks and returns the two reports
+side by side:
+
+```bash
+# terminal 1 — AiDotNet host (binds launchSettings: https://localhost:7001 + http://localhost:7000)
+cd aidotnet-benchmarks
+dotnet run -c Release
+
+# terminal 2 — PyTorch host
+cd pytorch-benchmarks
+python -m uvicorn pytorch_benchmarks.api:app --host 127.0.0.1 --port 8000
+
+# terminal 3 — run BOTH frameworks via the fan-out (sequential, so they never
+# contend for CPU; a full four-model run takes several minutes per side)
+curl -k -X POST "https://localhost:7001/api/Both/Benchmark?models=mlp,cnn,lstm,transformer" -o both.json
+```
+
+Each side is also available individually with the same query parameters
+(`models`, `epochs`, `trainBatches`, `batchSize`, `inferenceIterations`,
+`warmupIterations`, `seed` — defaults: 3 epochs × 20 batches × bs64 training,
+100 steady-state inference iterations after 10 warmups):
+
+```bash
+curl -k -X POST "https://localhost:7001/api/Benchmark/Models?models=mlp"   # AiDotNet only
+curl    -X POST "http://localhost:8000/api/Benchmark/Models?models=mlp"    # PyTorch only
+```
+
+`GET /api/Benchmark/Test` on either host is a readiness probe. Concurrent runs
+are rejected with 409 — a benchmark saturates the CPU, so two at once would
+corrupt each other's measurements.
+
+### PyTorch CLI (headless alternative)
+
+The Python side also keeps its CLI (same workload, same report JSON):
+
+```bash
+cd pytorch-benchmarks
 pytorch-bench --models mlp,cnn,lstm,transformer --output ../results/pytorch.json
 ```
 
 If `pytorch-bench` is not found, confirm that the virtual environment is active
 and rerun `python -m pip install -e .` from `pytorch-benchmarks/`. In PowerShell,
 you can avoid PATH issues by running `.\.venv\Scripts\pytorch-bench.exe` or
-`python -m pytorch_benchmarks` with the same benchmark arguments. You can also
-run `python src/pytorch_benchmarks --models mlp,cnn,lstm,transformer --output ../results/pytorch.json`
-from the same directory as an install-free fallback.
+`python -m pytorch_benchmarks` with the same benchmark arguments.
 
-### AiDotNet
+### Publication-grade runs
 
-```bash
-cd aidotnet-benchmarks
-dotnet restore
-dotnet run -c Release -- --models mlp,cnn,lstm,transformer --output ../results/aidotnet.json
-```
+A single in-process run on a busy machine is noisy. The published numbers in
+`Reporting/findings.md` interleave 8 rounds (AiDotNet, then PyTorch, ×8) with a
+**fresh host process per round**, and score each shape as the minimum p95 across
+its rounds. To reproduce: restart each host between rounds (process restart
+resets JIT/allocator/RSS state), POST `/api/Benchmark/Models` once per round,
+and save each response JSON.
 
 ## Result Files
 
