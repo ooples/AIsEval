@@ -1,0 +1,58 @@
+{
+  "framework": "PyTorch",
+  "python": "3.13.3",
+  "torch": "2.11.0+cpu",
+  "device": "cpu",
+  "cuda_available": false,
+  "results": [
+    {
+      "model": "lstm",
+      "device": "cpu",
+      "parameters": 25738,
+      "training": {
+        "epoch_seconds": [
+          1.456659
+        ],
+        "total_seconds": 1.700235,
+        "gradient_seconds_avg": 0.345326,
+        "data_loading_seconds_avg": 0.005795,
+        "resources": {
+          "cpu_percent_avg": 93.84,
+          "rss_mb_peak": 270.879,
+          "gpu_util_percent_avg": 6.0,
+          "gpu_mem_mb_peak": 791.0
+        }
+      },
+      "inference": [
+        {
+          "batch_size": 1,
+          "warmup_seconds_avg": 0.00366,
+          "steady_state_latency_ms_avg": 0.779,
+          "throughput_samples_per_second": 1284.456,
+          "memory_mb_peak": 269.801
+        },
+        {
+          "batch_size": 8,
+          "warmup_seconds_avg": 0.001548,
+          "steady_state_latency_ms_avg": 58.369,
+          "throughput_samples_per_second": 137.059,
+          "memory_mb_peak": 270.578
+        },
+        {
+          "batch_size": 32,
+          "warmup_seconds_avg": 0.002246,
+          "steady_state_latency_ms_avg": 33.04,
+          "throughput_samples_per_second": 968.537,
+          "memory_mb_peak": 271.414
+        },
+        {
+          "batch_size": 128,
+          "warmup_seconds_avg": 0.003043,
+          "steady_state_latency_ms_avg": 2.855,
+          "throughput_samples_per_second": 44836.138,
+          "memory_mb_peak": 274.297
+        }
+      ]
+    }
+  ]
+}

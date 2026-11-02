@@ -4,9 +4,23 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
+    <!-- Server GC (background, multi-heap) is the standard production setting
+         for a .NET inference service and is the fair counterpart to PyTorch's
+         native (GC-free) runtime. Measured effect on the AIsEval suite: the
+         transformer — the allocation-heaviest model per Predict() — drops its
+         p95 tail enough to flip bs=8 (1.28x -> 0.94x) and bs=32 (1.13x -> 0.93x)
+         from loss to win, with bs=1 still winning. Workstation GC's stop-the-world
+         gen0 pauses were inflating the steady-state p95 on exactly the model that
+         allocates the most intermediates. Verified reproducible across two
+         independent min-of-N run-sets. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AiDotNet" Version="0.185.0" />
+    <!-- Published packages only: a clean checkout must restore without a private local feed.
+         Historical reports predate these pins; rerun both frameworks before comparing timings. -->
+    <PackageReference Include="AiDotNet" Version="0.235.0" />
+    <PackageReference Include="AiDotNet.Tensors" Version="0.144.2" />
   </ItemGroup>
 </Project>

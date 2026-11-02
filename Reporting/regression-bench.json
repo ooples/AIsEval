@@ -1,0 +1,142 @@
+{
+  "summary": {
+    "AiDotNet/Small": {
+      "runs": 3,
+      "client_ms_min": 485.69,
+      "client_ms_mean": 1670.48,
+      "client_ms_max": 4000.93
+    },
+    "PyTorch/Small": {
+      "runs": 3,
+      "client_ms_min": 421.77,
+      "client_ms_mean": 898.51,
+      "client_ms_max": 1666.33
+    },
+    "AiDotNet/Large": {
+      "runs": 1,
+      "client_ms_min": 16792.21,
+      "client_ms_mean": 16792.21,
+      "client_ms_max": 16792.21
+    },
+    "PyTorch/Large": {
+      "runs": 1,
+      "client_ms_min": 3870.46,
+      "client_ms_mean": 3870.46,
+      "client_ms_max": 3870.46
+    }
+  },
+  "runs": [
+    {
+      "framework": "AiDotNet",
+      "size": "Small",
+      "run": 1,
+      "url": "http://127.0.0.1:7000/api/Regression/SimpleRegression",
+      "client_ms": 4000.93,
+      "server_timing": "app;dur=1787.869",
+      "status": 200,
+      "server_inference_ms": 1732.846,
+      "server_total_ms": 1787.869,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "MultipleRegression"
+    },
+    {
+      "framework": "AiDotNet",
+      "size": "Small",
+      "run": 2,
+      "url": "http://127.0.0.1:7000/api/Regression/SimpleRegression",
+      "client_ms": 485.69,
+      "server_timing": "app;dur=449.767",
+      "status": 200,
+      "server_inference_ms": 447.896,
+      "server_total_ms": 449.767,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "MultipleRegression"
+    },
+    {
+      "framework": "AiDotNet",
+      "size": "Small",
+      "run": 3,
+      "url": "http://127.0.0.1:7000/api/Regression/SimpleRegression",
+      "client_ms": 524.82,
+      "server_timing": "app;dur=482.342",
+      "status": 200,
+      "server_inference_ms": 480.787,
+      "server_total_ms": 482.342,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "MultipleRegression"
+    },
+    {
+      "framework": "PyTorch",
+      "size": "Small",
+      "run": 1,
+      "url": "http://127.0.0.1:8000/api/Regression/MultipleRegression",
+      "client_ms": 1666.33,
+      "server_timing": "app;dur=1237.292",
+      "status": 200,
+      "server_inference_ms": 1057.282,
+      "server_total_ms": 1237.292,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "torch.nn.Linear-MultipleRegression"
+    },
+    {
+      "framework": "PyTorch",
+      "size": "Small",
+      "run": 2,
+      "url": "http://127.0.0.1:8000/api/Regression/MultipleRegression",
+      "client_ms": 607.42,
+      "server_timing": "app;dur=572.637",
+      "status": 200,
+      "server_inference_ms": 568.736,
+      "server_total_ms": 572.637,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "torch.nn.Linear-MultipleRegression"
+    },
+    {
+      "framework": "PyTorch",
+      "size": "Small",
+      "run": 3,
+      "url": "http://127.0.0.1:8000/api/Regression/MultipleRegression",
+      "client_ms": 421.77,
+      "server_timing": "app;dur=401.29",
+      "status": 200,
+      "server_inference_ms": 396.189,
+      "server_total_ms": 401.29,
+      "parameter_count": 11,
+      "flops_estimate": 27023,
+      "model": "torch.nn.Linear-MultipleRegression"
+    },
+    {
+      "framework": "AiDotNet",
+      "size": "Large",
+      "run": 1,
+      "url": "http://127.0.0.1:7000/api/Regression/SimpleRegression",
+      "client_ms": 16792.21,
+      "server_timing": "app;dur=16507.122",
+      "status": 200,
+      "server_inference_ms": 15130.104,
+      "server_total_ms": 16507.122,
+      "parameter_count": 11,
+      "flops_estimate": 12672887,
+      "model": "MultipleRegression"
+    },
+    {
+      "framework": "PyTorch",
+      "size": "Large",
+      "run": 1,
+      "url": "http://127.0.0.1:8000/api/Regression/MultipleRegression",
+      "client_ms": 3870.46,
+      "server_timing": "app;dur=3575.297",
+      "status": 200,
+      "server_inference_ms": 401.009,
+      "server_total_ms": 3575.297,
+      "parameter_count": 11,
+      "flops_estimate": 12672887,
+      "model": "torch.nn.Linear-MultipleRegression"
+    }
+  ]
+}
