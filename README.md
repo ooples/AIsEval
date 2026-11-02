@@ -4,6 +4,12 @@ This repository contains two separate benchmark projects designed to compare
 PyTorch and AiDotNet under the same high-level workload families and metric
 schema.
 
+The benchmark restores published AiDotNet `0.235.0` and AiDotNet.Tensors `0.144.2` from NuGet.
+Committed timing reports predate these pins and are historical; rerun both frameworks before making current performance claims.
+`AISEVAL_COMPILED=1` validates compiled outputs against an eager snapshot for every batch setup, including shape and finite-value checks.
+Each inference row records the actual `ExecutionMode` (`eager`, `compiled`, or `fused`) and whether its no-GC region completed.
+Run the adversarial output checks with `dotnet test tests/CompiledOutputGuard.Tests -c Release`.
+
 ## Projects
 
 | Project | Runtime | Purpose |
@@ -102,9 +108,8 @@ results/
   evidence.
 - Memory measurement is now symmetric — both sides record peak RSS (Windows
   `Process.WorkingSet64` / Linux `psutil.Process.memory_info().rss`).
-- AiDotNet NuGet pin is `0.207.13` with `AiDotNet.Tensors` pinned to `0.91.1`
-  (was `0.207.9` / `0.86.4`; originally `0.185.0`).
-- **Compiled/fused training engages** on AiDotNet 0.207.13: PR #1469 reverted the
+- Historical reports used AiDotNet `0.207.x` and AiDotNet.Tensors `0.91.x`; they do not describe the current package pins.
+- **Historical compiled/fused training investigation:** on AiDotNet 0.207.13, PR #1469 reverted the
   default optimizer to standard Adam so the fused step is no longer rejected.
   Run with `AISEVAL_FUSED_DIAG=1` to confirm (`Hit=True`, 60/60 fused steps, no
   fallback for every model). The training loop is one forward per batch on both

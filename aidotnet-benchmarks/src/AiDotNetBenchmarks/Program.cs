@@ -328,12 +328,13 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 process.Refresh();
                 peak = Math.Max(peak, process.WorkingSet64 / 1024d / 1024d);
             }
+            bool noGcCompleted = false;
             if (noGcStarted)
             {
                 // End the region. Throws InvalidOperationException if the runtime had
                 // to induce a GC mid-region (budget exhausted) — in that case the region
                 // already ended on its own, so the throw is benign.
-                try { GC.EndNoGCRegion(); }
+                try { GC.EndNoGCRegion(); noGcCompleted = true; }
                 catch (InvalidOperationException) { }
             }
             if (opProfile)
@@ -356,7 +357,7 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
                 Math.Round(steady.Average() * 1000d, 3),
                 Math.Round(steadySorted[p95Idx] * 1000d, 3),
                 Math.Round(options.InferenceIterations * batchSize / totalSteady, 3),
-                Math.Round(peak, 3)));
+                Math.Round(peak, 3), model.ExecutionMode, noGcCompleted));
         }
         return reports;
     }
@@ -367,6 +368,7 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
 internal interface IBenchmarkModel
 {
     long ParameterCount { get; }
+    string ExecutionMode => "eager";
     void LoadSyntheticBatch(int batchSize);
     void Forward();
     void Backward();
@@ -437,8 +439,6 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
     private Func<Tensor<float>, Tensor<float>>? _predictCompiled;
     private bool _compiledReady;
-    private bool _compiledChecked;
-
     protected AiDotNetBenchmarkModel(int seed)
     {
         Random = new Random(seed);
@@ -452,6 +452,7 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
     }
 
     public long ParameterCount { get; }
+    public string ExecutionMode => _compiledReady ? "compiled" : "eager";
 
     protected abstract NeuralNetworkBase<float> BuildNetwork();
     protected abstract int[] InputShapePerSample { get; }   // shape WITHOUT batch dim
@@ -484,21 +485,16 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
         if (UseCompiled && _predictCompiled is not null)
         {
             _compiledReady = Network.CompileForward(Input);
-            if (_compiledReady && !_compiledChecked)
+            if (_compiledReady)
             {
-                _compiledChecked = true;
+                // Snapshot eager output: compiled replay may reuse the same output storage.
                 var eager = Network.Predict(Input);
+                var eagerValues = eager.ToArray();
+                var eagerShape = eager.Shape.ToArray();
                 var compiled = _predictCompiled(Input);
-                var e = eager.AsSpan(); var c = compiled.AsSpan();
-                double maxAbs = 0, maxMag = 1e-6;
-                for (int i = 0; i < e.Length; i++)
+                if (!CompiledOutputGuard.Matches(eagerValues, compiled.ToArray(), eagerShape, compiled.Shape.ToArray()))
                 {
-                    maxAbs = Math.Max(maxAbs, Math.Abs(e[i] - c[i]));
-                    maxMag = Math.Max(maxMag, Math.Abs(e[i]));
-                }
-                if (e.Length != c.Length || maxAbs / maxMag > 1e-3)
-                {
-                    Console.WriteLine($"[bench] WARNING {GetType().Name}: compiled output diverges from eager (relErr={maxAbs / maxMag:E2}) — falling back to eager.");
+                    Console.WriteLine($"[bench] WARNING {GetType().Name}: compiled output is non-finite, has a different shape, or diverges from eager — falling back to eager.");
                     _compiledReady = false;
                 }
             }
@@ -603,6 +599,7 @@ internal sealed class AiDotNetMlpFusedModel : IBenchmarkModel
     }
 
     public long ParameterCount { get; }
+    public string ExecutionMode => "fused";
 
     public void LoadSyntheticBatch(int batchSize)
     {
@@ -811,7 +808,7 @@ internal sealed record BenchmarkReport(string Framework, string DotNetRuntime, o
 internal sealed record ModelReport(string Model, string Backend, long Parameters, TrainingReport Training, List<InferenceReport> Inference);
 internal sealed record TrainingReport(double[] EpochSeconds, double TotalSeconds, double GradientSecondsAvg, double DataLoadingSecondsAvg, ResourceReport Resources);
 internal sealed record ResourceReport(double ManagedRssMbPeak, string? NvidiaSmiSample);
-internal sealed record InferenceReport(int BatchSize, double WarmupSecondsAvg, double SteadyStateLatencyMsAvg, double SteadyStateLatencyMsP95, double ThroughputSamplesPerSecond, double MemoryMbPeak);
+internal sealed record InferenceReport(int BatchSize, double WarmupSecondsAvg, double SteadyStateLatencyMsAvg, double SteadyStateLatencyMsP95, double ThroughputSamplesPerSecond, double MemoryMbPeak, string ExecutionMode, bool NoGcRegionCompleted);
 
 internal static class JsonOptions
 {
