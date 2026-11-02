@@ -12,8 +12,10 @@ def verify(path):
     assert len(results) == 4
     metrics = ("WarmupSecondsAvg", "SteadyStateLatencyMsAvg", "SteadyStateLatencyMsP95",
                "ThroughputSamplesPerSecond", "MemoryMbPeak")
+    # Include lazily allocated classifier heads; constructor-time counts omitted them.
+    parameters = {"mlp": 468874, "cnn": 20490, "lstm": 25482, "transformer": 69322}
     for model in results:
-        assert model["Parameters"] > 0
+        assert model["Parameters"] == parameters[model["Model"]], model["Model"]
         assert len(model["Inference"]) == 4
         assert {row["BatchSize"] for row in model["Inference"]} == {1, 8, 32, 128}
         for row in model["Inference"]:

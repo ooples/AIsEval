@@ -443,7 +443,6 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
     {
         Random = new Random(seed);
         Network = BuildNetwork();
-        ParameterCount = Network.GetParameters().Length;
         if (UseCompiled && PredictCompiledMi is not null)
         {
             _predictCompiled = (Func<Tensor<float>, Tensor<float>>)Delegate.CreateDelegate(
@@ -451,7 +450,7 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
         }
     }
 
-    public long ParameterCount { get; }
+    public long ParameterCount => Network.GetParameters().Length;
     public string ExecutionMode => _compiledReady ? "compiled" : "eager";
 
     protected abstract NeuralNetworkBase<float> BuildNetwork();

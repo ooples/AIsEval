@@ -8,6 +8,7 @@ The benchmark restores published AiDotNet `0.235.0` and AiDotNet.Tensors `0.144.
 Committed timing reports predate these pins and are historical; rerun both frameworks before making current performance claims.
 `AISEVAL_COMPILED=1` validates compiled outputs against an eager snapshot for every batch setup, including shape and finite-value checks.
 Each inference row records the actual `ExecutionMode` (`eager`, `compiled`, or `fused`) and whether its no-GC region completed.
+Parameter counts are read after execution has materialized lazy classifier heads.
 Run the adversarial output checks with `dotnet test tests/CompiledOutputGuard.Tests -c Release`.
 
 ## Projects
@@ -18,6 +19,10 @@ Run the adversarial output checks with `dotnet test tests/CompiledOutputGuard.Te
 | `aidotnet-benchmarks/` | C# / .NET | Evaluates AiDotNet package identity and provides C# benchmark plumbing with a swappable model backend. |
 
 ## Benchmark Coverage
+
+These are model-family measurements of each framework's production paths. The CNNs use different final pooling
+and classifier sizes (AiDotNet: 20,490 parameters; PyTorch: 9,930), and the Transformer configurations differ in
+positional encoding and attention biases. They are not operator-for-operator architecture comparisons.
 
 ### Training
 
