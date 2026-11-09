@@ -251,7 +251,8 @@ AiDotNet.Tensors 0.91.1. The current revision pins AiDotNet 0.235.0 and
 AiDotNet.Tensors 0.144.2, so the commands below run the current packages and will not
 reproduce these figures. To reproduce the recorded configuration, run them from the
 revision that pinned those versions, `git checkout 05db126`. That revision predates the
-later fixes to this harness, including the regression route's convergence fix.
+later fixes to this harness, including the regression route's convergence fix, and has
+no `bench` extra: there, run step 2 as `python -m pip install -e . requests`.
 
 ```bash
 # 1. Build C# (release)

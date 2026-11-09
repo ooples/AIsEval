@@ -32,7 +32,7 @@ from pathlib import Path
 import requests
 
 
-def post_csv(url: str, features: Path, tests: Path, timeout: float = 600.0) -> tuple[float, str, int, dict]:
+def post_csv(url: str, features: Path, tests: Path, timeout: float = 600.0) -> tuple[float, str, int, object]:
     with features.open("rb") as f_feat, tests.open("rb") as f_test:
         files = {
             "features": ("features.csv", f_feat, "text/csv"),
@@ -55,8 +55,25 @@ def test_row_count(tests: Path) -> int:
         return sum(1 for line in handle if line.strip()) - 1
 
 
-def validation_error(code: int, body: dict, expected_rows: int) -> str | None:
+# Server metrics copied into the report; each must be absent, null or a finite number.
+COPIED_METRICS = (("timings", "inference_ms"), ("timings", "total_ms"),
+                  ("model_metrics", "parameter_count"), ("model_metrics", "flops_estimate"))
+
+
+def is_finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def section(body: dict, name: str) -> dict:
+    """A nested object of the response, or {} when it is absent or not an object."""
+    value = body.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def validation_error(code: int, body, expected_rows: int) -> str | None:
     """Why a response is not a usable prediction, or None when it is."""
+    if not isinstance(body, dict):
+        return f"HTTP {code}: the response is not a JSON object"
     if code != 200:
         detail = body.get("error")
         return f"HTTP {code}: {detail}" if detail else f"HTTP {code}"
@@ -64,10 +81,20 @@ def validation_error(code: int, body: dict, expected_rows: int) -> str | None:
     if not isinstance(predictions, list) or len(predictions) != expected_rows:
         count = len(predictions) if isinstance(predictions, list) else "no"
         return f"expected {expected_rows} predictions, got {count}"
+    seen = set()
     for item in predictions:
-        value = item.get("prediction") if isinstance(item, dict) else None
-        if not isinstance(value, (int, float)) or not math.isfinite(value):
+        if not isinstance(item, dict):
+            return f"a prediction is not an object: {item!r}"
+        value, row = item.get("prediction"), item.get("rowIndex")
+        if not is_finite_number(value):
             return f"a prediction is not a finite number: {item!r}"
+        if not isinstance(row, int) or isinstance(row, bool) or not 0 <= row < expected_rows or row in seen:
+            return f"rowIndex values must cover 0..{expected_rows - 1} once each: {item!r}"
+        seen.add(row)
+    for parent, name in COPIED_METRICS:
+        value = section(body, parent).get(name)
+        if value is not None and not is_finite_number(value):
+            return f"{parent}.{name} is not a finite number: {value!r}"
     return None
 
 
@@ -111,8 +138,8 @@ def main() -> int:
                         })
                         continue
                     print(f"{ms:.1f}ms (status={code}, ST={st!r})")
-                    timings = body.get("timings") or {}
-                    metrics = body.get("model_metrics") or {}
+                    timings = section(body, "timings")
+                    metrics = section(body, "model_metrics")
                     results.append({
                         "framework": framework, "size": size_label, "run": i,
                         "url": url, "client_ms": round(ms, 2),
@@ -146,7 +173,7 @@ def main() -> int:
     failures = [r for r in results if "error" in r]
     out_path = repo_root / args.output
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"summary": summary, "runs": results, "failures": len(failures)}, indent=2))
+    out_path.write_text(json.dumps({"summary": summary, "runs": results, "failures": len(failures)}, indent=2, allow_nan=False))
     print(f"\nWrote {out_path}")
     print(json.dumps(summary, indent=2))
     if failures:
