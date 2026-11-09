@@ -7,10 +7,15 @@ import pytest
 from fastapi import Response
 from starlette.datastructures import FormData
 
+import torch
+
 from pytorch_benchmarks.controllers.regression_controller import (
     CsvRegressionInput,
+    RegressionDidNotConvergeError,
     _find_csv_input,
     _gpu_metrics,
+    _predict_with_torch_least_squares,
+    _predict_with_torch_training_loop,
     _read_request_form,
 )
 
@@ -117,3 +122,36 @@ def test_gpu_metrics_does_not_probe_gpu_when_not_requested(
     assert metrics.name is None
     assert metrics.utilization_percent is None
     assert metrics.memory_allocated_mb is None
+
+
+def _unscaled_regression() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # Columns on the benchmark's scales: square feet in the thousands, a rating near 5, a price
+    # in the hundreds of thousands.
+    generator = torch.Generator().manual_seed(7)
+    x = torch.stack(
+        [
+            torch.rand(200, generator=generator, dtype=torch.float64) * 3000 + 500,
+            torch.rand(200, generator=generator, dtype=torch.float64) * 10,
+        ],
+        dim=1,
+    )
+    noise = torch.randn(200, generator=generator, dtype=torch.float64) * 5000
+    y = (150 * x[:, 0] + 20000 * x[:, 1] + 50000 + noise).unsqueeze(1)
+    return x, y, x[:20]
+
+
+def test_training_loop_matches_least_squares_on_unscaled_columns() -> None:
+    x, y, x_tests = _unscaled_regression()
+
+    trained = _predict_with_torch_training_loop(x, y, x_tests)
+    solved = _predict_with_torch_least_squares(x, y, x_tests)
+
+    relative_rmse = ((trained - solved) ** 2).mean().sqrt() / solved.abs().mean()
+    assert float(relative_rmse) < 1e-4
+
+
+def test_training_loop_rejects_an_unconverged_fit() -> None:
+    x, y, x_tests = _unscaled_regression()
+
+    with pytest.raises(RegressionDidNotConvergeError):
+        _predict_with_torch_training_loop(x, y, x_tests, epochs=5)

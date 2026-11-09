@@ -1,0 +1,34 @@
+name: Benchmark validation
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AIDOTNET_DISABLE_GPU: '1'
+      DOTNET_PROCESSOR_COUNT: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build aidotnet-benchmarks/AiDotNetBenchmarks.csproj -c Release
+      - run: dotnet test tests/CompiledOutputGuard.Tests -c Release
+      - name: Exercise eager and compiled requests
+        shell: bash
+        run: |
+          for mode in 0 1; do
+            AISEVAL_COMPILED=$mode dotnet aidotnet-benchmarks/bin/Release/net10.0/AiDotNetBenchmarks.dll \
+              --models mlp,cnn,lstm,transformer --epochs 1 --train-batches 1 --batch-size 1 \
+              --inference-iterations 3 --warmup-iterations 1 --output "$RUNNER_TEMP/smoke-$mode.json"
+            python scripts/verify_smoke_report.py "$RUNNER_TEMP/smoke-$mode.json"
+          done
