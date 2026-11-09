@@ -97,20 +97,27 @@ results/
 - Discard the first run if you want to eliminate package JIT/import cache effects.
 - The C# project's `Program.cs` benchmark constructs real AiDotNet networks
   (`FeedForwardNeuralNetwork`, `ConvolutionalNeuralNetwork`, `LSTMNeuralNetwork`,
-  `FeedForwardNeuralNetwork` with `TransformerEncoderLayer`) matching the
-  PyTorch counterparts shape-for-shape, and runs them through
+  `FeedForwardNeuralNetwork` with `TransformerEncoderLayer`) and runs them through
   `NeuralNetworkBase.Train` (real autograd + Adam) and `NeuralNetworkBase.Predict`.
+  Only the MLP matches its PyTorch counterpart shape for shape. The CNN differs
+  (AiDotNet: a second max pool and a 1,568-element dense input; PyTorch: adaptive
+  average pooling and a 512-element input), and so do the LSTM and Transformer
+  parameter counts, so their timing gaps are not framework differences alone
+  (see `Reporting/findings.md`).
   An earlier scaffold used a hand-rolled MLP for every model name with a fake
   backward/optimizer; see `Reporting/PRIOR-FINDINGS-DISCLAIMER.md` for the
   audit of why numbers from that state should not be cited as a
   framework-to-framework comparison.
-- The REST API regression endpoints are now framework-symmetric: AiDotNet's
-  `/api/Regression/MultipleRegression` runs the full `AiModelBuilder` lifecycle,
-  and the PyTorch `/api/Regression/MultipleRegression` route mirrors that
-  lifecycle with an `nn.Linear + MSELoss + Adam` training loop. The PyTorch
-  `/api/Regression/Predict` (raw `torch.linalg.lstsq`) route is preserved for
-  LAPACK-vs-builder profiling but should not be cited as framework-to-framework
-  evidence.
+- The REST API regression endpoints: AiDotNet's `/api/Regression/SimpleRegression`
+  runs the full `AiModelBuilder` lifecycle (it selects `MultipleRegression` when
+  there is more than one feature, with an internal train/validation/test split),
+  and the PyTorch `/api/Regression/MultipleRegression` route trains an
+  `nn.Linear + MSELoss + Adam` loop on standardized columns over every training
+  row, with no validation split, and fails if the fit has not converged. The two
+  do different work, so their timings are endpoint timings, not a measure of
+  framework overhead. The PyTorch `/api/Regression/Predict` (raw
+  `torch.linalg.lstsq`) route is preserved for LAPACK-vs-builder profiling but
+  should not be cited as framework-to-framework evidence.
 - Memory measurement is now symmetric — both sides record peak RSS (Windows
   `Process.WorkingSet64` / Linux `psutil.Process.memory_info().rss`).
 - Historical reports used AiDotNet `0.207.x` and AiDotNet.Tensors `0.91.x`; they do not describe the current package pins.

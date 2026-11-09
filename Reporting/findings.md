@@ -127,7 +127,11 @@ report records `torch.__version__` so the mode/version is auditable per run.
 Per-model scaffold comparison (Program.cs / \_\_main\_\_.py)
 -----------------------------------------------------------
 
-Workload: `--epochs 3 --train-batches 20 --batch-size 64 --inference-iterations 100 --warmup-iterations 10`. Both sides construct shape-matched networks (table below).
+Workload: `--epochs 3 --train-batches 20 --batch-size 64 --inference-iterations 100 --warmup-iterations 10`. Only the MLPs are shape-matched (table below). The CNN, LSTM and Transformer differ,
+as their parameter counts in the Numbers table show: the AiDotNet CNN uses a second
+max pool and a 1,568-element dense input (20,490 parameters), the PyTorch CNN an
+adaptive average pool and a 512-element input (9,930 parameters). Their timing gaps
+therefore include a difference in network, not only a difference in framework.
 
 | Family | AiDotNet construction | PyTorch construction |
 |---|---|---|
@@ -198,7 +202,7 @@ Regression endpoint comparison (small + large CSV)
 
 Endpoints:
 - AiDotNet: `POST /api/Regression/SimpleRegression` (the controller internally dispatches to `MultipleRegression` model when feature count > 1 — i.e. the full `AiModelBuilder<>.ConfigureModel(new MultipleRegression<double>()).BuildAsync()` lifecycle).
-- PyTorch: `POST /api/Regression/MultipleRegression` (the framework-symmetric route added in this PR: real `nn.Linear + MSELoss + Adam` training loop, 200 epochs).
+- PyTorch: `POST /api/Regression/MultipleRegression` (`nn.Linear + MSELoss + Adam`, 200 steps over every training row, no validation split).
 
 Workload:
 - Small: `TestData/RegressionTestData/Complex/SmallSet` — 99 training rows × 10 features.
@@ -214,13 +218,21 @@ Client-side wall time (includes HTTP round-trip + server-side training + inferen
 | **Small, warm avg (runs 2-3)** | **505 ms** | **515 ms** |
 | Large, run 1 | 16 792 ms | 3 870 ms |
 
-Server-internal `Server-Timing` was within ~5 % of client wall time for every run (no significant client/network overhead). Raw JSON in `Reporting/regression-bench.json`.
+Server-internal `Server-Timing` was within about 10 % of client wall time for the warm
+and large runs, but not for the cold first runs: the first AiDotNet small run took
+4,001 ms at the client and 1,788 ms at the server, the first PyTorch run 1,666 ms and
+1,237 ms. Most of a cold run is spent outside the server timer (first-request startup
+work), so cold client times are not server compute. Raw JSON in
+`Reporting/regression-bench.json`.
 
-**Direction:**
-- Small dataset (99 rows × 10 features), warm: **roughly tied** (~500 ms either way).
-- Large dataset (48 000 rows × 10 features): **AiDotNet ~4.3× slower** (16.8 s vs 3.9 s).
-
-The large-set gap is a real perf finding — the `AiModelBuilder<MultipleRegression>` pipeline at 48k rows is heavier than 200 epochs of PyTorch Adam on `nn.Linear(10, 1)`. It is NOT the 5.3× gap the prior numbers suggested (4 100 / 770), because the prior numbers compared the `AiModelBuilder` pipeline against PyTorch's raw `torch.linalg.lstsq` LAPACK call, which is not a training pipeline.
+**Reading these numbers:** these are endpoint timings, not a measure of framework
+overhead. The two endpoints do different work: AiDotNet's builder splits the rows into
+train/validation/test sets and validates, while the PyTorch route trains on every row
+with no split. The PyTorch figures were also recorded with the earlier version of that
+route, which trained on unscaled columns and did not converge (its predictions were off
+by about the target's own magnitude). The route now standardizes the columns and fails
+when the fit has not converged, so its timings must be re-recorded before they are
+compared. Matching the work and checking the model quality on both sides comes first.
 
 Memory measurement parity
 -------------------------
@@ -234,12 +246,19 @@ Caveat: AiDotNet's CPU-only RSS is inflated by the one-time OpenCL kernel-cache 
 How to reproduce
 ----------------
 
+The numbers above are historical: they were recorded with AiDotNet 0.207.13 and
+AiDotNet.Tensors 0.91.1. The current revision pins AiDotNet 0.235.0 and
+AiDotNet.Tensors 0.144.2, so the commands below run the current packages and will not
+reproduce these figures. To reproduce the recorded configuration, run them from the
+revision that pinned those versions, `git checkout 05db126`. That revision predates the
+later fixes to this harness, including the regression route's convergence fix.
+
 ```bash
 # 1. Build C# (release)
 cd aidotnet-benchmarks && dotnet restore && dotnet build -c Release
 
 # 2. Install Python deps
-cd ../pytorch-benchmarks && python -m pip install -e .
+cd ../pytorch-benchmarks && python -m pip install -e ".[bench]"   # bench: requests, for step 4
 
 # 3. Per-model scaffold (AiDotNet 0.207.13 / Tensors 0.91.1).
 #    Pin CPU + threads on both sides; AISEVAL_FUSED_DIAG=1 prints whether the

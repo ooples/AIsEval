@@ -250,20 +250,7 @@
       "Model": "mlp-fused",
       "Backend": "AiDotNetNeuralNetwork",
       "Parameters": 468874,
-      "Training": {
-        "EpochSeconds": [
-          0.011581,
-          0.008543,
-          0.008463
-        ],
-        "TotalSeconds": 0.028607,
-        "GradientSecondsAvg": 2E-06,
-        "DataLoadingSecondsAvg": 0.000474,
-        "Resources": {
-          "ManagedRssMbPeak": 384.387,
-          "NvidiaSmiSample": "4, 848"
-        }
-      },
+      "Training": null,
       "Inference": [
         {
           "BatchSize": 1,

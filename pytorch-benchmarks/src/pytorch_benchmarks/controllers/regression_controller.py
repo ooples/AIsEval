@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import os
@@ -248,6 +249,10 @@ class CsvFormatError(ValueError):
     pass
 
 
+class RegressionDidNotConvergeError(RuntimeError):
+    """The training loop ended with a gradient too large to call its fit a solution."""
+
+
 @dataclass(frozen=True)
 class CsvRegressionInput:
     filename: str
@@ -281,6 +286,7 @@ async def predict(
         request, response, use_gpu,
         predictor=_predict_with_torch_least_squares,
         model_label="torch.linalg.lstsq-linear-regression",
+        flops_estimator=_estimate_linear_regression_flops,
     )
 
 
@@ -305,6 +311,9 @@ async def predict_multiple_regression(
         request, response, use_gpu,
         predictor=_predict_with_torch_training_loop,
         model_label="torch.nn.Linear-MultipleRegression",
+        # The least-squares estimate describes one normal-equation solve, not 200 training
+        # steps; no estimate is reported rather than a wrong one.
+        flops_estimator=None,
     )
 
 
@@ -315,6 +324,7 @@ async def _run_regression(
     *,
     predictor,
     model_label: str,
+    flops_estimator,
 ) -> CsvRegressionResponse | JSONResponse:
     performance = _PerformanceMeasurement.start()
     preprocess_start = time.perf_counter()
@@ -384,7 +394,12 @@ async def _run_regression(
         cuda_end = torch.cuda.Event(enable_timing=True)
         cuda_start.record()
 
-    prediction_tensor = predictor(x_train, y_train, x_tests)
+    # The solve or training loop is synchronous; run it on a worker thread so the event loop
+    # keeps serving other requests meanwhile.
+    try:
+        prediction_tensor = await asyncio.to_thread(predictor, x_train, y_train, x_tests)
+    except RegressionDidNotConvergeError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
     if gpu_used and cuda_start is not None and cuda_end is not None:
         cuda_end.record()
@@ -422,8 +437,10 @@ async def _run_regression(
         model_metrics=ModelMetrics(
             batch_size=len(test_rows),
             parameter_count=feature_count + 1,
-            flops_estimate=_estimate_linear_regression_flops(
-                len(training_rows), len(test_rows), feature_count
+            flops_estimate=(
+                flops_estimator(len(training_rows), len(test_rows), feature_count)
+                if flops_estimator is not None
+                else None
             ),
         ),
         framework="PyTorch",
@@ -564,7 +581,8 @@ def _predict_with_torch_training_loop(
     x_tests: torch.Tensor,
     *,
     epochs: int = 200,
-    lr: float = 1e-2,
+    lr: float = 1e-1,
+    gradient_tolerance: float = 1e-3,
 ) -> torch.Tensor:
     """Framework-symmetric regression: nn.Linear + MSELoss + Adam training.
 
@@ -573,11 +591,23 @@ def _predict_with_torch_training_loop(
     — that builder does model configuration, internal train/validation
     split, and an iterative solve. This function provides the equivalent
     PyTorch flow so a published timing comparison reflects framework
-    overhead and not LAPACK-vs-builder. Defaults (200 epochs, lr=1e-2)
-    converge to the same OLS solution as torch.linalg.lstsq within
-    1e-4 RMSE on synthetic data.
+    overhead and not LAPACK-vs-builder.
+
+    Features and target are standardized before training and the predictions
+    mapped back: on the raw benchmark columns (square feet in the thousands,
+    prices in the hundreds of thousands) Adam's bounded steps cannot reach the
+    solution in 200 steps, and the predictions were off by about the target's
+    own magnitude. Standardized, the defaults (200 steps, lr=1e-1) match
+    torch.linalg.lstsq to about 1e-5 relative RMSE on both benchmark datasets.
+    A fit whose final gradient norm (in standardized units) exceeds
+    `gradient_tolerance` raises RegressionDidNotConvergeError instead of
+    returning predictions.
     """
     feature_count = x_train.shape[1]
+    x_mean, x_scale = x_train.mean(dim=0), _scale_of(x_train.std(dim=0))
+    y_mean, y_scale = y_train.mean(), _scale_of(y_train.std())
+    x_normalized = (x_train - x_mean) / x_scale
+    y_normalized = (y_train - y_mean) / y_scale
     model = torch.nn.Linear(feature_count, 1, bias=True).to(
         dtype=x_train.dtype, device=x_train.device
     )
@@ -585,12 +615,27 @@ def _predict_with_torch_training_loop(
     loss_fn = torch.nn.MSELoss()
     for _ in range(epochs):
         optimizer.zero_grad(set_to_none=True)
-        predictions = model(x_train)
-        loss = loss_fn(predictions, y_train)
+        predictions = model(x_normalized)
+        loss = loss_fn(predictions, y_normalized)
         loss.backward()
         optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    loss_fn(model(x_normalized), y_normalized).backward()
+    gradient_norm = float(
+        torch.cat([parameter.grad.flatten() for parameter in model.parameters()]).norm()
+    )
+    if not gradient_norm <= gradient_tolerance:
+        raise RegressionDidNotConvergeError(
+            f"The training loop did not converge in {epochs} steps "
+            f"(gradient norm {gradient_norm:.3g} > {gradient_tolerance:g})."
+        )
     with torch.no_grad():
-        return model(x_tests).squeeze(dim=1)
+        return (model((x_tests - x_mean) / x_scale) * y_scale + y_mean).squeeze(dim=1)
+
+
+def _scale_of(std: torch.Tensor) -> torch.Tensor:
+    """A standard deviation usable as a divisor: a constant column (or a single row) scales by 1."""
+    return torch.where(torch.isfinite(std) & (std > 0), std, torch.ones_like(std))
 
 
 def _parse_float(value: str) -> float:

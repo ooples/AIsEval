@@ -15,6 +15,10 @@ dependencies = [
   "python-multipart>=0.0.9",
 ]
 
+[project.optional-dependencies]
+# Reporting/run-regression-bench.py, the client that times both regression APIs.
+bench = ["requests>=2.31"]
+
 [project.scripts]
 pytorch-bench = "pytorch_benchmarks.__main__:main"
 pytorch-bench-api = "pytorch_benchmarks.server:main"

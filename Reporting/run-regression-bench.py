@@ -12,13 +12,20 @@ Endpoints:
             LAPACK-vs-builder timing but is not used here.)
 
 Reports both client-wall-time (this process clock) and the server's
-Server-Timing header (server-internal duration).
+Server-Timing header (server-internal duration). Only a validated response (HTTP 200
+with one finite prediction per test row) is timed; any other outcome is recorded as a
+failure, left out of the summary, and makes the script exit nonzero.
+
+Needs `requests`: install the harness with `python -m pip install -e ".[bench]"` from
+pytorch-benchmarks/.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -42,7 +49,29 @@ def post_csv(url: str, features: Path, tests: Path, timeout: float = 600.0) -> t
     return elapsed_ms, server_timing, resp.status_code, body
 
 
-def main() -> None:
+def test_row_count(tests: Path) -> int:
+    """Data rows in a tests CSV: every non-blank line after the header."""
+    with tests.open(encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip()) - 1
+
+
+def validation_error(code: int, body: dict, expected_rows: int) -> str | None:
+    """Why a response is not a usable prediction, or None when it is."""
+    if code != 200:
+        detail = body.get("error")
+        return f"HTTP {code}: {detail}" if detail else f"HTTP {code}"
+    predictions = body.get("prediction")
+    if not isinstance(predictions, list) or len(predictions) != expected_rows:
+        count = len(predictions) if isinstance(predictions, list) else "no"
+        return f"expected {expected_rows} predictions, got {count}"
+    for item in predictions:
+        value = item.get("prediction") if isinstance(item, dict) else None
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            return f"a prediction is not a finite number: {item!r}"
+    return None
+
+
+def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--aidotnet-url", default="http://127.0.0.1:7000")
     p.add_argument("--pytorch-url",  default="http://127.0.0.1:8000")
@@ -67,11 +96,20 @@ def main() -> None:
     for size_label, subdir, repeat in plan:
         features = data_root / subdir / "features.csv"
         tests    = data_root / subdir / "tests.csv"
+        expected_rows = test_row_count(tests)
         for framework, url in endpoints:
             for i in range(1, repeat + 1):
                 print(f"[bench] {framework} / {size_label} / run {i}/{repeat} … ", end="", flush=True)
                 try:
                     ms, st, code, body = post_csv(url, features, tests)
+                    error = validation_error(code, body, expected_rows)
+                    if error is not None:
+                        print(f"FAILED: {error}")
+                        results.append({
+                            "framework": framework, "size": size_label, "run": i,
+                            "url": url, "status": code, "error": error,
+                        })
+                        continue
                     print(f"{ms:.1f}ms (status={code}, ST={st!r})")
                     timings = body.get("timings") or {}
                     metrics = body.get("model_metrics") or {}
@@ -85,7 +123,7 @@ def main() -> None:
                         "flops_estimate": metrics.get("flops_estimate"),
                         "model": body.get("model"),
                     })
-                except Exception as exc:
+                except (requests.RequestException, OSError, ValueError) as exc:
                     print(f"FAILED: {exc!r}")
                     results.append({
                         "framework": framework, "size": size_label, "run": i,
@@ -96,7 +134,7 @@ def main() -> None:
     for size_label, _, _ in plan:
         for framework, _ in endpoints:
             xs = [r["client_ms"] for r in results
-                  if r.get("framework") == framework and r.get("size") == size_label and "client_ms" in r]
+                  if r.get("framework") == framework and r.get("size") == size_label and "error" not in r]
             if xs:
                 summary[f"{framework}/{size_label}"] = {
                     "runs": len(xs),
@@ -105,12 +143,17 @@ def main() -> None:
                     "client_ms_max":  round(max(xs), 2),
                 }
 
+    failures = [r for r in results if "error" in r]
     out_path = repo_root / args.output
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"summary": summary, "runs": results}, indent=2))
+    out_path.write_text(json.dumps({"summary": summary, "runs": results, "failures": len(failures)}, indent=2))
     print(f"\nWrote {out_path}")
     print(json.dumps(summary, indent=2))
+    if failures:
+        print(f"{len(failures)} run(s) failed and are excluded from the summary.", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

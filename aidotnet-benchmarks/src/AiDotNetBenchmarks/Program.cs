@@ -164,9 +164,18 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
             var modelStart = Stopwatch.StartNew();
             Console.WriteLine($"[bench] {modelName}: building network…");
             var model = factory.Create(modelName);
-            Console.WriteLine($"[bench] {modelName}: training ({options.Epochs}e × {options.TrainBatches}b × {options.BatchSize}bs, {model.ParameterCount} params)…");
-            var training = BenchmarkTraining(model);
-            Console.WriteLine($"[bench] {modelName}: training done in {training.TotalSeconds:F2}s; running inference…");
+            // A forward-only model reports no training: its no-op steps would read as a training time.
+            TrainingReport? training = null;
+            if (model.SupportsTraining)
+            {
+                Console.WriteLine($"[bench] {modelName}: training ({options.Epochs}e × {options.TrainBatches}b × {options.BatchSize}bs, {model.ParameterCount} params)…");
+                training = BenchmarkTraining(model);
+                Console.WriteLine($"[bench] {modelName}: training done in {training.TotalSeconds:F2}s; running inference…");
+            }
+            else
+            {
+                Console.WriteLine($"[bench] {modelName}: forward-only, training not applicable; running inference…");
+            }
             var inference = BenchmarkInference(model);
             modelStart.Stop();
             Console.WriteLine($"[bench] {modelName}: complete in {modelStart.Elapsed.TotalSeconds:F2}s");
@@ -241,6 +250,7 @@ internal sealed class BenchmarkRunner(BenchmarkOptions options)
         foreach (var batchSize in InferenceBatchSizes)
         {
             model.LoadSyntheticBatch(batchSize);
+            model.PrepareInference();
 
             // Warmup iterations prime JIT compilation and tensor internals before
             // steady-state measurements are recorded.
@@ -369,7 +379,11 @@ internal interface IBenchmarkModel
 {
     long ParameterCount { get; }
     string ExecutionMode => "eager";
+    // False for a forward-only model whose Backward and Step do nothing.
+    bool SupportsTraining => true;
     void LoadSyntheticBatch(int batchSize);
+    // Readies the loaded batch for Forward (compiled mode compiles and checks its plan here).
+    void PrepareInference() { }
     void Forward();
     void Backward();
     void Step();
@@ -476,13 +490,19 @@ internal abstract class AiDotNetBenchmarkModel : IBenchmarkModel
             labels[b * OutputClasses + cls] = 1f;
         }
         Label = new Tensor<float>(labels, [batchSize, OutputClasses]);
+    }
 
+    public void PrepareInference()
+    {
         // Compiled mode: pre-warm the plan for this batch shape (trace + compile
         // happens here, NOT inside the timed steady-state loop), and run a one-time
         // eager-vs-compiled output comparison so a silently-wrong replay can never
-        // masquerade as a perf win.
+        // masquerade as a perf win. Only the inference benchmark calls this: the
+        // training loop never replays the plan, so compiling there would only inflate
+        // its data-loading time.
         if (UseCompiled && _predictCompiled is not null)
         {
+            var batchSize = Input.Shape[0];
             _compiledReady = Network.CompileForward(Input);
             if (_compiledReady)
             {
@@ -599,6 +619,7 @@ internal sealed class AiDotNetMlpFusedModel : IBenchmarkModel
 
     public long ParameterCount { get; }
     public string ExecutionMode => "fused";
+    public bool SupportsTraining => false;
 
     public void LoadSyntheticBatch(int batchSize)
     {
@@ -804,7 +825,7 @@ internal static class AiDotNetProbe
 }
 
 internal sealed record BenchmarkReport(string Framework, string DotNetRuntime, object AiDotNet, List<ModelReport> Results);
-internal sealed record ModelReport(string Model, string Backend, long Parameters, TrainingReport Training, List<InferenceReport> Inference);
+internal sealed record ModelReport(string Model, string Backend, long Parameters, TrainingReport? Training, List<InferenceReport> Inference);
 internal sealed record TrainingReport(double[] EpochSeconds, double TotalSeconds, double GradientSecondsAvg, double DataLoadingSecondsAvg, ResourceReport Resources);
 internal sealed record ResourceReport(double ManagedRssMbPeak, string? NvidiaSmiSample);
 internal sealed record InferenceReport(int BatchSize, double WarmupSecondsAvg, double SteadyStateLatencyMsAvg, double SteadyStateLatencyMsP95, double ThroughputSamplesPerSecond, double MemoryMbPeak, string ExecutionMode, bool NoGcRegionCompleted);
